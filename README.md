@@ -1,0 +1,2 @@
+# qoorag
+Open source RAG
