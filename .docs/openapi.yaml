@@ -1,0 +1,925 @@
+openapi: 3.0.3
+info:
+  title: qoorag API
+  version: 0.1.0
+  description: |
+    企业级 RAG 知识库平台接口契约（MVP 骨架）。
+    - 管理类接口（`/api/auth`、`/api/admin`、`/api/kb`）使用**会话令牌**鉴权（Bearer <sessionToken>）。
+    - 对外检索/问答接口（`/api/v1`）使用**API Key**鉴权（Bearer <apiKey>），风格对齐 OpenAI 兼容。
+    - 统一响应结构：`{ code, message, data }`，`code=0` 表示成功。
+    - 本文档与 `.docs/05.4_接口设计.md` 配套；字段级数据模型见 `.docs/03_数据架构设计文档.md` §4。
+  license:
+    name: 内部使用
+servers:
+  - url: http://localhost:8080
+    description: 本地开发（Docker Compose 单机）
+  - url: https://{host}
+    description: 生产环境（前置反向代理/Ingress，全链路 TLS）
+    variables:
+      host:
+        default: qoorag.example.com
+tags:
+  - name: Auth
+    description: 登录 / 登出 / 当前会话
+  - name: SystemAdmin
+    description: 系统管理（仅系统管理员）用户与角色
+  - name: KnowledgeBase
+    description: 知识库管理（仅知识管理员）KB / 检索权限 / API Key
+  - name: ExternalAPI
+    description: 对外检索与问答（API Key 鉴权，OpenAI 兼容）
+security: []
+paths:
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: 登录获取会话令牌
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespSession'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '422':
+          $ref: '#/components/responses/Err422'
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: 登出（销毁会话令牌）
+      operationId: logout
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: 获取当前会话信息
+      operationId: me
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RespMe'
+        '401':
+          $ref: '#/components/responses/Err401'
+
+  /api/admin/users:
+    get:
+      tags: [SystemAdmin]
+      summary: 列出当前租户下未删除用户
+      operationId: listUsers
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RespUserList'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+    post:
+      tags: [SystemAdmin]
+      summary: 新增用户（系统管理员）
+      operationId: createUser
+      security:
+        - sessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespUser'
+        '400':
+          $ref: '#/components/responses/Err400'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+        '409':
+          $ref: '#/components/responses/Err409User'
+  /api/admin/users/{id}/roles:
+    post:
+      tags: [SystemAdmin]
+      summary: 分配/替换用户角色
+      operationId: assignRoles
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roleIds]
+              properties:
+                roleIds:
+                  type: array
+                  items: { type: integer, format: int64 }
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+        '404':
+          $ref: '#/components/responses/Err404'
+  /api/admin/users/{id}/status:
+    put:
+      tags: [SystemAdmin]
+      summary: 启用/停用用户
+      operationId: setUserStatus
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ACTIVE, DISABLED]
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+        '404':
+          $ref: '#/components/responses/Err404'
+  /api/admin/roles:
+    get:
+      tags: [SystemAdmin]
+      summary: 列出全部角色
+      operationId: listRoles
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RespRoleList'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+    post:
+      tags: [SystemAdmin]
+      summary: 新增角色
+      operationId: createRole
+      security:
+        - sessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespRole'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Sys'
+        '409':
+          $ref: '#/components/responses/Err409Role'
+
+  /api/kb:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出当前租户下知识库
+      operationId: listKb
+      security:
+        - sessionToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RespKBList'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+    post:
+      tags: [KnowledgeBase]
+      summary: 创建知识库
+      operationId: createKb
+      security:
+        - sessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KBCreate'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespKB'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+  /api/kb/{id}:
+    delete:
+      tags: [KnowledgeBase]
+      summary: 软删除知识库（进入保留期）
+      operationId: softDeleteKb
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+        '404':
+          $ref: '#/components/responses/Err404'
+  /api/kb/{id}/permissions:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出知识库检索权限
+      operationId: listKbPermissions
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespKbPermList'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+    post:
+      tags: [KnowledgeBase]
+      summary: 授予检索权限（RBAC）
+      operationId: addKbPermission
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KbPermCreate'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespKbPerm'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+        '404':
+          $ref: '#/components/responses/Err404'
+  /api/kb/{id}/permissions/{permId}:
+    delete:
+      tags: [KnowledgeBase]
+      summary: 收回检索权限
+      operationId: removeKbPermission
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+        - $ref: '#/components/parameters/PermId'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+  /api/kb/{id}/apikeys:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出知识库 API Key
+      operationId: listApiKeys
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespApiKeyList'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+    post:
+      tags: [KnowledgeBase]
+      summary: 签发 API Key（明文仅返回一次）
+      operationId: createApiKey
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Key 名称/备注
+      responses:
+        '200':
+          $ref: '#/components/responses/RespApiKeyCreated'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+  /api/kb/{id}/apikeys/{keyId}:
+    delete:
+      tags: [KnowledgeBase]
+      summary: 吊销 API Key
+      operationId: revokeApiKey
+      security:
+        - sessionToken: []
+      parameters:
+        - $ref: '#/components/parameters/KbId'
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespVoid'
+        '401':
+          $ref: '#/components/responses/Err401'
+        '403':
+          $ref: '#/components/responses/Err403Kb'
+
+  /api/v1/retrieve:
+    post:
+      tags: [ExternalAPI]
+      summary: 检索召回片段（API Key 鉴权）
+      operationId: retrieve
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrieveRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespRetrieve'
+        '401':
+          $ref: '#/components/responses/Err401Key'
+        '403':
+          $ref: '#/components/responses/Err403Key'
+        '429':
+          $ref: '#/components/responses/Err429'
+      x-status: skeleton
+      description: 骨架接口；真实实现待接入 Embedding + pgvector 相似检索（受 kb_id / tenant_id 约束）与检索权限校验，见 `.docs/05_技术架构设计文档.md` §9.2。
+  /api/v1/chat:
+    post:
+      tags: [ExternalAPI]
+      summary: 检索 + 生成问答（OpenAI 兼容，API Key 鉴权）
+      operationId: chat
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/RespChat'
+        '401':
+          $ref: '#/components/responses/Err401Key'
+        '403':
+          $ref: '#/components/responses/Err403Key'
+        '429':
+          $ref: '#/components/responses/Err429'
+      x-status: skeleton
+      description: 骨架接口；真实实现待接入检索 → 拼 Prompt → LLM 生成，并写入 qa_trace，见 `.docs/05_技术架构设计文档.md` §9.2 / §9.5。
+
+components:
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: 管理接口会话令牌（由 `/api/auth/login` 签发，内存态；生产应改 Redis）。请求头 `Authorization: Bearer <sessionToken>`。
+    apiKey:
+      type: http
+      scheme: bearer
+      description: 对外接口 API Key（按知识库签发，SHA-256 存储）。请求头 `Authorization: Bearer <apiKey>`，自动继承绑定知识库的 tenant_id 隔离与 RBAC 检索权限。
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: 用户 ID
+      schema: { type: integer, format: int64 }
+    KbId:
+      name: id
+      in: path
+      required: true
+      description: 知识库 ID
+      schema: { type: integer, format: int64 }
+    PermId:
+      name: permId
+      in: path
+      required: true
+      description: 权限记录 ID
+      schema: { type: integer, format: int64 }
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      description: API Key ID
+      schema: { type: integer, format: int64 }
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: admin }
+        password: { type: string, format: password, example: "123456" }
+    UserCreate:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: alice }
+        password: { type: string, format: password, example: "ChangeMe!2026" }
+        displayName: { type: string, example: 张三 }
+        roleIds:
+          type: array
+          items: { type: integer, format: int64 }
+          example: [2]
+    RoleCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: 审计员 }
+        description: { type: string, example: 只读审计日志 }
+    KBCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: 产品手册库 }
+        description: { type: string, example: 2026 版产品 FAQ 与手册 }
+        dataClassification:
+          type: string
+          enum: [PUBLIC, INTERNAL, CONFIDENTIAL, SECRET]
+          default: INTERNAL
+    KbPermCreate:
+      type: object
+      required: [targetType, targetId]
+      properties:
+        targetType:
+          type: string
+          enum: [ROLE, USER, EXTERNAL]
+          example: ROLE
+        targetId:
+          type: string
+          example: "2"
+    RetrieveRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          example: 如何重置密码？
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+          description: 召回片段数（骨架默认 5）
+        kb_id:
+          type: integer
+          format: int64
+          description: 可选；默认取 API Key 绑定的知识库
+    ChatRequest:
+      type: object
+      required: [query]
+      properties:
+        model:
+          type: string
+          default: qoorag-rag
+          description: 模型标识（预留，当前由资源池决定）
+        query:
+          type: string
+          example: 请总结退货政策要点
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+        stream:
+          type: boolean
+          default: false
+          description: 是否流式输出（MVP 后置）
+        kb_id:
+          type: integer
+          format: int64
+          description: 可选；默认取 API Key 绑定的知识库
+    SessionInfo:
+      type: object
+      properties:
+        token: { type: string, example: "c1f0e2...uuid" }
+        userId: { type: integer, format: int64, example: 1 }
+        roles:
+          type: array
+          items: { type: string }
+          example: ["系统管理员", "知识管理员"]
+    MeInfo:
+      type: object
+      properties:
+        userId: { type: integer, format: int64, example: 1 }
+        tenantId: { type: integer, format: int64, example: 1 }
+        roles:
+          type: array
+          items: { type: string }
+          example: ["知识管理员"]
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 1 }
+        tenantId: { type: integer, format: int64, example: 1 }
+        username: { type: string, example: alice }
+        displayName: { type: string, example: 张三 }
+        status: { type: string, enum: [ACTIVE, DISABLED], example: ACTIVE }
+        createdAt: { type: string, format: date-time }
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+    Role:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 2 }
+        name: { type: string, example: 知识管理员 }
+        description: { type: string, example: 知识库与检索链路运营 }
+    KnowledgeBase:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 1 }
+        tenantId: { type: integer, format: int64, example: 1 }
+        ownerId: { type: integer, format: int64, example: 1 }
+        name: { type: string, example: 产品手册库 }
+        description: { type: string, example: 2026 版产品 FAQ 与手册 }
+        dataClassification:
+          type: string
+          enum: [PUBLIC, INTERNAL, CONFIDENTIAL, SECRET]
+          example: INTERNAL
+        status: { type: string, enum: [ACTIVE, DELETED], example: ACTIVE }
+        createdAt: { type: string, format: date-time }
+    KbPermission:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 10 }
+        kbId: { type: integer, format: int64, example: 1 }
+        tenantId: { type: integer, format: int64, example: 1 }
+        targetType: { type: string, enum: [ROLE, USER, EXTERNAL], example: ROLE }
+        targetId: { type: string, example: "2" }
+        permission: { type: string, enum: [RETRIEVE], example: RETRIEVE }
+        createdAt: { type: string, format: date-time }
+    ApiKey:
+      type: object
+      description: 列表返回不含 key_hash
+      properties:
+        id: { type: integer, format: int64, example: 5 }
+        kbId: { type: integer, format: int64, example: 1 }
+        name: { type: string, example: 生产环境Key }
+        status: { type: string, enum: [ACTIVE, REVOKED], example: ACTIVE }
+        rateLimit: { type: integer, example: 60 }
+        createdAt: { type: string, format: date-time }
+    ApiKeyCreated:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 5 }
+        rawKey:
+          type: string
+          description: 明文 Key，仅此一次返回
+          example: "qk_9f2a...c1b2e3d4"
+    Chunk:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 1001 }
+        documentId: { type: integer, format: int64, example: 500 }
+        kbId: { type: integer, format: int64, example: 1 }
+        content: { type: string, example: 密码重置入口位于设置页... }
+        seq: { type: integer, example: 3 }
+        score:
+          type: number
+          format: float
+          description: 相似度得分（检索返回）
+          example: 0.87
+    Source:
+      type: object
+      description: 问答来源引用
+      properties:
+        kbId: { type: integer, format: int64, example: 1 }
+        documentId: { type: integer, format: int64, example: 500 }
+        chunkId: { type: integer, format: int64, example: 1001 }
+        content: { type: string, example: 密码重置入口位于设置页... }
+        score: { type: number, format: float, example: 0.87 }
+    RetrieveResult:
+      type: object
+      properties:
+        query: { type: string, example: 如何重置密码？ }
+        top_k: { type: integer, example: 5 }
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Chunk'
+    ChatResult:
+      type: object
+      properties:
+        answer: { type: string, example: 您可在"设置 > 账户安全"中重置密码... }
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+        model: { type: string, example: qoorag-rag }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer, example: 320 }
+            completion_tokens: { type: integer, example: 85 }
+            total_tokens: { type: integer, example: 405 }
+    Error:
+      type: object
+      properties:
+        code: { type: integer, example: 40101 }
+        message: { type: string, example: 未登录或令牌缺失 }
+
+  responses:
+    RespSession:
+      description: 登录成功
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/SessionInfo'
+    RespMe:
+      description: 当前会话
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/MeInfo'
+    RespUser:
+      description: 用户
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/User'
+    RespUserList:
+      description: 用户列表
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    RespRole:
+      description: 角色
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/Role'
+    RespRoleList:
+      description: 角色列表
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Role'
+    RespKB:
+      description: 知识库
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/KnowledgeBase'
+    RespKBList:
+      description: 知识库列表
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeBase'
+    RespKbPerm:
+      description: 权限记录
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/KbPermission'
+    RespKbPermList:
+      description: 权限列表
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KbPermission'
+    RespApiKeyList:
+      description: API Key 列表
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiKey'
+    RespApiKeyCreated:
+      description: 新签发 API Key（含明文）
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/ApiKeyCreated'
+    RespRetrieve:
+      description: 检索结果
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/RetrieveResult'
+    RespChat:
+      description: 问答结果
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data:
+                $ref: '#/components/schemas/ChatResult'
+    RespVoid:
+      description: 成功（无数据）
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: integer, example: 0 }
+              message: { type: string, example: ok }
+              data: { type: string, nullable: true, example: null }
+    Err400:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40001, message: 参数校验失败 }
+    Err401:
+      description: 未登录或令牌无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40101, message: 未登录或令牌缺失 }
+    Err401Key:
+      description: 缺少或无效 API Key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40103, message: 缺少 API Key }
+    Err422:
+      description: 账号不可用
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 42201, message: 账号已被停用 }
+    Err403Sys:
+      description: 需要系统管理员角色
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40301, message: 无权限：需要系统管理员角色 }
+    Err403Kb:
+      description: 需要知识管理员角色
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40302, message: 无权限：需要知识管理员角色 }
+    Err403Key:
+      description: API Key 无对应知识库检索权限
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40303, message: 该 Key 无此知识库检索权限 }
+    Err404:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40401, message: 知识库不存在 }
+    Err409User:
+      description: 用户名已存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40901, message: 用户名已存在 }
+    Err409Role:
+      description: 角色名已存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 40902, message: 角色名已存在 }
+    Err429:
+      description: 限流超出
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { code: 42901, message: 超出 Key 速率限制 }
