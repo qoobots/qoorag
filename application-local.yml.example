@@ -1,0 +1,27 @@
+# ============================================================================
+# 本地开发环境配置模板（application-local.yml）
+# 
+# 使用方式：
+#   1. 复制此文件为 application-local.yml
+#   2. 填入你的本地密钥
+#   3. 启动时激活 local profile：
+#      mvn spring-boot:run -Dspring-boot.run.profiles=local
+#      或
+#      java -jar qoorag.jar --spring.profiles.active=local
+#
+# 注意：application-local.yml 已被 .gitignore 忽略（*.local），不会提交到 Git。
+# ============================================================================
+
+# 数据库（本地 PostgreSQL）
+DB_USERNAME: postgres
+DB_PASSWORD: your_db_password_here
+
+# Redis（本地）
+REDIS_HOST: localhost
+REDIS_PORT: 6379
+
+# 管理员默认密码
+ADMIN_DEFAULT_PASSWORD: your_admin_password_here
+
+# 阿里云百炼 API Key（在 https://dashscope.console.aliyun.com 获取）
+BAILIAN_API_KEY: sk-your-bailian-api-key-here

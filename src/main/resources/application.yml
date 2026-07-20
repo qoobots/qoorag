@@ -4,8 +4,8 @@ server:
 spring:
   datasource:
     url: jdbc:postgresql://127.0.0.1:5432/qoorag
-    username: postgres
-    password: "123456"
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -18,10 +18,8 @@ spring:
             non_contextual_creation: true
   data:
     redis:
-      host: localhost
-      port: 6379
-      # password: 123456  # redis.windows-service.conf 中已设置，当前 redis-server 运行实例未启用 requirepass
-      # Redis 5.x 不支持 ACL 用户名，无需配置 username
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   servlet:
     multipart:
       max-file-size: 50MB
@@ -30,13 +28,13 @@ spring:
 qoorag:
   security:
     # 默认管理员初始密码（首次启动由 SeedService 写入，BCrypt 加密）
-    default-admin-password: "123456"
+    default-admin-password: ${ADMIN_DEFAULT_PASSWORD:}
     # 知识库软删除保留期（天），过期后定时任务物理清理业务数据
     kb-retention-days: 30
   # 阿里云百炼大模型（OpenAI 兼容模式）
   bailian:
     base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api-key: sk-8860881a0a6a461fa2e612e56dd037fa
+    api-key: ${BAILIAN_API_KEY:}
     embedding-model: text-embedding-v2
     chat-model: qwen-plus
     embedding-batch-size: 25
