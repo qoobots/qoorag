@@ -16,6 +16,12 @@ spring:
         jdbc:
           lob:
             non_contextual_creation: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      # password: 123456  # redis.windows-service.conf 中已设置，当前 redis-server 运行实例未启用 requirepass
+      # Redis 5.x 不支持 ACL 用户名，无需配置 username
   servlet:
     multipart:
       max-file-size: 50MB
