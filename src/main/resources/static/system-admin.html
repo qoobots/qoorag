@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>系统管理 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/index.html">首页</a>
+        <a href="/rag-admin.html">知识库管理</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>用户管理</h2>
+        <label>用户名</label><input id="u_username">
+        <label>密码</label><input id="u_password" type="password">
+        <label>显示名</label><input id="u_displayName">
+        <label>角色（逗号分隔角色ID）</label><input id="u_roleIds" placeholder="1,2">
+        <div style="margin-top:12px"><button onclick="addUser()">新增用户</button></div>
+        <table id="userTable">
+            <thead><tr><th>ID</th><th>用户名</th><th>显示名</th><th>状态</th><th>角色</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div class="card">
+        <h2>角色</h2>
+        <label>角色名</label><input id="r_name">
+        <label>描述</label><input id="r_desc">
+        <div style="margin-top:12px"><button onclick="addRole()">新增角色</button></div>
+        <table id="roleTable">
+            <thead><tr><th>ID</th><th>名称</th><th>描述</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+async function loadUsers() {
+    const r = await api('GET', '/api/admin/users');
+    const tb = document.querySelector('#userTable tbody');
+    tb.innerHTML = '';
+    (r.data || []).forEach(u => {
+        const roles = (u.roles || []).map(x => x.name).join(',');
+        tb.innerHTML += `<tr><td>${u.id}</td><td>${u.username}</td><td>${u.displayName||''}</td><td>${u.status}</td><td>${roles}</td></tr>`;
+    });
+}
+async function loadRoles() {
+    const r = await api('GET', '/api/admin/roles');
+    const tb = document.querySelector('#roleTable tbody');
+    tb.innerHTML = '';
+    (r.data || []).forEach(role => {
+        tb.innerHTML += `<tr><td>${role.id}</td><td>${role.name}</td><td>${role.description||''}</td></tr>`;
+    });
+}
+async function addUser() {
+    const roleIds = document.getElementById('u_roleIds').value.split(',').map(s => s.trim()).filter(Boolean).map(Number);
+    await api('POST', '/api/admin/users', {
+        username: document.getElementById('u_username').value,
+        password: document.getElementById('u_password').value,
+        displayName: document.getElementById('u_displayName').value,
+        roleIds
+    });
+    loadUsers();
+}
+async function addRole() {
+    await api('POST', '/api/admin/roles', {
+        name: document.getElementById('r_name').value,
+        description: document.getElementById('r_desc').value
+    });
+    loadRoles();
+}
+function logout() {
+    api('POST', '/api/auth/logout').finally(() => {
+        localStorage.removeItem('qoorag_token');
+        location.href = '/login.html';
+    });
+}
+loadUsers(); loadRoles();
+</script>
+</body>
+</html>

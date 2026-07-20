@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/qoorag
+    username: qoorag
+    password: qoorag
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          lob:
+            non_contextual_creation: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+qoorag:
+  security:
+    # 默认管理员初始密码（首次启动由 SeedService 写入，BCrypt 加密）
+    default-admin-password: "123456"
+    # 知识库软删除保留期（天），过期后定时任务物理清理业务数据
+    kb-retention-days: 30

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>知识库管理 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/index.html">首页</a>
+        <a href="/system-admin.html">系统管理</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>知识库列表</h2>
+        <label>名称</label><input id="kb_name">
+        <label>描述</label><input id="kb_desc">
+        <label>数据分级</label>
+        <select id="kb_class">
+            <option value="PUBLIC">PUBLIC</option>
+            <option value="INTERNAL" selected>INTERNAL</option>
+            <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+            <option value="SECRET">SECRET</option>
+        </select>
+        <div style="margin-top:12px"><button onclick="addKb()">新建知识库</button></div>
+        <table id="kbTable">
+            <thead><tr><th>ID</th><th>名称</th><th>分级</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div class="card">
+        <h2>检索权限（RBAC）</h2>
+        <label>知识库ID</label><input id="perm_kbId">
+        <label>授权对象类型（ROLE/USER/EXTERNAL）</label><input id="perm_type" value="ROLE">
+        <label>授权对象ID（角色名/用户ID/外部用户ID）</label><input id="perm_target">
+        <div style="margin-top:12px"><button onclick="addPerm()">授权</button></div>
+    </div>
+    <div class="card">
+        <h2>API Key（按知识库签发）</h2>
+        <label>知识库ID</label><input id="key_kbId">
+        <label>名称</label><input id="key_name">
+        <div style="margin-top:12px"><button onclick="addKey()">签发 Key</button></div>
+        <div id="keyResult" class="code" style="margin-top:12px"></div>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+async function loadKb() {
+    const r = await api('GET', '/api/kb');
+    const tb = document.querySelector('#kbTable tbody');
+    tb.innerHTML = '';
+    (r.data || []).forEach(kb => {
+        tb.innerHTML += `<tr>
+            <td>${kb.id}</td><td>${kb.name}</td><td>${kb.dataClassification}</td><td>${kb.status}</td>
+            <td class="row-actions">
+                <button onclick="delKb(${kb.id})">删除</button>
+                <button onclick="listPerm(${kb.id})">权限</button>
+                <button onclick="listKey(${kb.id})">Keys</button>
+            </td></tr>`;
+    });
+}
+async function addKb() {
+    await api('POST', '/api/kb', {
+        name: document.getElementById('kb_name').value,
+        description: document.getElementById('kb_desc').value,
+        dataClassification: document.getElementById('kb_class').value
+    });
+    loadKb();
+}
+async function delKb(id) {
+    if (!confirm('确认软删除该知识库？')) return;
+    await api('DELETE', '/api/kb/' + id);
+    loadKb();
+}
+async function addPerm() {
+    const kbId = document.getElementById('perm_kbId').value;
+    await api('POST', '/api/kb/' + kbId + '/permissions', {
+        targetType: document.getElementById('perm_type').value,
+        targetId: document.getElementById('perm_target').value
+    });
+    alert('已授权');
+}
+async function listPerm(kbId) {
+    const r = await api('GET', '/api/kb/' + kbId + '/permissions');
+    alert('权限列表：\n' + JSON.stringify(r.data, null, 2));
+}
+async function addKey() {
+    const kbId = document.getElementById('key_kbId').value;
+    const r = await api('POST', '/api/kb/' + kbId + '/apikeys', { name: document.getElementById('key_name').value });
+    document.getElementById('keyResult').textContent = '明文 Key（仅此一次）：\n' + r.data.rawKey;
+}
+async function listKey(kbId) {
+    const r = await api('GET', '/api/kb/' + kbId + '/apikeys');
+    alert('API Keys：\n' + JSON.stringify(r.data, null, 2));
+}
+function logout() {
+    api('POST', '/api/auth/logout').finally(() => {
+        localStorage.removeItem('qoorag_token');
+        location.href = '/login.html';
+    });
+}
+loadKb();
+</script>
+</body>
+</html>

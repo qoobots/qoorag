@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>登录 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="login-wrap card">
+    <h2>qoorag 登录</h2>
+    <label>用户名</label>
+    <input id="username" value="admin" autocomplete="username">
+    <label>密码</label>
+    <input id="password" type="password" value="123456" autocomplete="current-password">
+    <div style="margin-top:16px">
+        <button onclick="doLogin()">登录</button>
+    </div>
+    <p class="muted">默认账号 admin / 123456（首次启动由 SeedService 写入）</p>
+</div>
+<script src="/js/api.js"></script>
+<script>
+async function doLogin() {
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const r = await api('POST', '/api/auth/login', { username, password });
+    if (r.code === 0) {
+        localStorage.setItem('qoorag_token', r.data.token);
+        location.href = '/index.html';
+    } else {
+        alert('登录失败：' + r.message);
+    }
+}
+</script>
+</body>
+</html>

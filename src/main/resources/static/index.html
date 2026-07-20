@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>qoorag 控制台</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/system-admin.html">系统管理</a>
+        <a href="/rag-admin.html">知识库管理</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>欢迎</h2>
+        <p id="me" class="muted">加载中…</p>
+        <p>qoorag 企业级 RAG 知识库平台（MVP 骨架）。左侧进入系统管理或知识库管理。</p>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+async function load() {
+    const r = await api('GET', '/api/auth/me');
+    if (r.code === 0) {
+        document.getElementById('me').textContent =
+            '当前用户ID: ' + r.data.userId + ' | 租户: ' + r.data.tenantId + ' | 角色: ' + r.data.roles.join(', ');
+    }
+}
+function logout() {
+    api('POST', '/api/auth/logout').finally(() => {
+        localStorage.removeItem('qoorag_token');
+        location.href = '/login.html';
+    });
+}
+load();
+</script>
+</body>
+</html>
