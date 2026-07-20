@@ -120,6 +120,15 @@ CREATE TABLE IF NOT EXISTS vector_data (
 CREATE INDEX IF NOT EXISTS idx_vector_kb ON vector_data(kb_id);
 CREATE INDEX IF NOT EXISTS idx_vector_tenant ON vector_data(tenant_id);
 
+-- ANN 近似最近邻索引（IVFFlat；检索加速）
+-- 说明：IVFFlat 索引需在数据写入后创建；lists 按表行数取 sqrt(rows) 以内
+--       当前表为空时先跳过，待有数据后执行下方 SQL：
+-- CREATE INDEX IF NOT EXISTS idx_vector_embedding_ivfflat
+--     ON vector_data USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- 如后续改用 HNSW（pgvector 0.5+），替换为：
+-- CREATE INDEX IF NOT EXISTS idx_vector_embedding_hnsw
+--     ON vector_data USING hnsw (embedding vector_cosine_ops);
+
 -- ---------------------------------------------------------------------------
 -- API Key（4.10，按知识库签发；key_hash 为 SHA-256 十六进制）
 -- ---------------------------------------------------------------------------

@@ -2,8 +2,13 @@ package com.qoobot.qoorag.controller;
 
 import com.qoobot.qoorag.common.Result;
 import com.qoobot.qoorag.common.SecurityContext;
+import com.qoobot.qoorag.common.SessionInfo;
+import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
+import com.qoobot.qoorag.service.RetrieveService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -15,24 +20,41 @@ import java.util.Map;
 @RequestMapping("/api/v1")
 public class ApiController {
 
-    private final QaTraceRepository qaTraceRepository;
+    private static final Logger log = LoggerFactory.getLogger(ApiController.class);
 
-    public ApiController(QaTraceRepository qaTraceRepository) {
+    private final QaTraceRepository qaTraceRepository;
+    private final RetrieveService retrieveService;
+
+    public ApiController(QaTraceRepository qaTraceRepository,
+                         RetrieveService retrieveService) {
         this.qaTraceRepository = qaTraceRepository;
+        this.retrieveService = retrieveService;
     }
 
-    /** 检索（骨架：返回占位结构，真实实现接入向量库 + 权限校验） */
+    /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
     @PostMapping("/retrieve")
     public Result retrieve(@RequestBody Map<String, Object> body) {
-        SecurityContext.get(); // 已由拦截器写入 kbId / tenantId
+        SessionInfo ctx = SecurityContext.get();
         String query = (String) body.get("query");
-        Integer topK = body.get("topK") == null ? 5 : (Integer) body.get("topK");
-        // TODO: 调用 embedding + pgvector 相似检索（受 kbId / tenant_id 约束），并校验检索权限
-        return Result.ok(Map.of(
-                "query", query,
-                "topK", topK,
-                "chunks", List.of()   // 占位：实际返回召回片段
-        ));
+        if (query == null || query.isBlank()) {
+            return Result.fail(400, "query 不能为空");
+        }
+        Integer topK = body.get("topK") == null ? 5 : ((Number) body.get("topK")).intValue();
+        if (topK < 1 || topK > 100) {
+            topK = Math.max(1, Math.min(topK, 100)); // 夹逼到 1~100
+        }
+
+        try {
+            List<RetrieveChunk> chunks = retrieveService.retrieve(query, topK, ctx.getKbId(), ctx.getTenantId());
+            return Result.ok(Map.of(
+                    "query", query,
+                    "topK", topK,
+                    "chunks", chunks
+            ));
+        } catch (Exception e) {
+            log.error("检索失败: {}", e.getMessage(), e);
+            return Result.fail(500, "检索失败: " + e.getMessage());
+        }
     }
 
     /** 问答（骨架：返回占位结构，真实实现接入 LLM） */
