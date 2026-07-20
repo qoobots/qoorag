@@ -1,13 +1,15 @@
 package com.qoobot.qoorag.entity;
 
+import com.pgvector.PGvector;
+import com.qoobot.qoorag.config.PGvectorUserType;
 import jakarta.persistence.*;
+import org.hibernate.annotations.Type;
 import java.time.LocalDateTime;
 
 /**
  * 向量（pgvector；4.9 受 tenant_id + RLS 约束）
- * <p>骨架阶段：embedding 以 JSON 数组字符串存放，列类型仍为 vector(1536)。
- * 生产接入时建议引入 pgvector JDBC 库（com.pgvector:pgvector）并用类型转换器
- * 绑定 PGvector，以支持 ANN 相似检索（<-> 算子）。
+ * <p>已接入 com.pgvector:pgvector 库，embedding 字段使用 PGvector 原生类型，
+ * 支持 ANN 相似检索（<=> 余弦距离算子）。
  */
 @Entity
 @Table(name = "vector_data")
@@ -25,8 +27,9 @@ public class VectorData {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    @Type(PGvectorUserType.class)
     @Column(name = "embedding", columnDefinition = "vector(1536)")
-    private String embedding;
+    private PGvector embedding;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -39,8 +42,18 @@ public class VectorData {
     public void setKbId(Long kbId) { this.kbId = kbId; }
     public Long getTenantId() { return tenantId; }
     public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
-    public String getEmbedding() { return embedding; }
-    public void setEmbedding(String embedding) { this.embedding = embedding; }
+
+    public PGvector getEmbedding() { return embedding; }
+    public void setEmbedding(PGvector embedding) { this.embedding = embedding; }
+
+    /** 便捷：以 float[] 读写 embedding */
+    public float[] getEmbeddingArray() {
+        return embedding != null ? embedding.toArray() : null;
+    }
+    public void setEmbeddingArray(float[] array) {
+        this.embedding = new PGvector(array);
+    }
+
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
