@@ -42,7 +42,7 @@ spring:
 qoorag:
   security:
     # 默认管理员初始密码（首次启动由 SeedService 写入，BCrypt 加密）
-    default-admin-password: ${ADMIN_DEFAULT_PASSWORD:}
+    default-admin-password: ${ADMIN_DEFAULT_PASSWORD:123456}
     # 知识库软删除保留期（天），过期后定时任务物理清理业务数据
     kb-retention-days: 30
     # 会话令牌 TTL（分钟），过期后需重新登录；每次请求自动续期
