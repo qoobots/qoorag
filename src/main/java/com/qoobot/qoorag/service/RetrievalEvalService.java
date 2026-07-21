@@ -41,14 +41,14 @@ public class RetrievalEvalService {
 
     /** 单条评估结果 */
     public record SingleEval(double recallAtK, double precisionAtK, boolean hit, int firstHitRank,
-                             List<RetrievedItem> items) {}
+                             List<RetrievedItem> items, boolean loopSuspected, double overlapRatio) {}
 
     /** 单条查询评估：在 topK 范围内比对相关性 */
     public SingleEval evaluateSingle(LabeledQuery q, List<RetrieveChunk> results, int topK) {
         int relevantTotal = countRelevant(q);
         if (relevantTotal == 0 || topK <= 0) {
-            // 无标注相关项（或 K 非法）无法计算召回，置 0
-            return new SingleEval(0.0, 0.0, false, -1, List.of());
+            // 无标注相关项（或 K 非法）无法计算召回，置 0；无 chunk 标注故不判定循环标注
+            return new SingleEval(0.0, 0.0, false, -1, List.of(), false, 0.0);
         }
         Set<Long> relChunk = q.relevantChunkIds();
         Set<Long> relDoc = q.relevantDocIds();
@@ -82,7 +82,27 @@ public class RetrievalEvalService {
         int covered = coveredChunks.size() + coveredDocs.size();
         double recall = (double) covered / relevantTotal;
         double precision = (double) hits / topK; // 标准 precision@K：相关命中数 / K（hits≤K，故恒 ≤ 100%）
-        return new SingleEval(recall, precision, covered > 0, firstHitRank, items);
+
+        // 循环标注检测：比较「标注 chunk 集合」与「本次召回 chunk 集合」的重合度。
+        // 若标注的 chunk 绝大部分被本次召回覆盖，且召回项也大多属于标注，则极可能是
+        // 直接把检索结果当成了标注（循环标注），该条指标无参考意义。
+        boolean loopSuspected = false;
+        double overlapRatio = 0.0;
+        if (!relChunk.isEmpty()) {
+            Set<Long> retrievedChunks = new HashSet<>();
+            for (RetrievedItem it : items) {
+                retrievedChunks.add(it.chunkId());
+            }
+            Set<Long> inter = new HashSet<>(relChunk);
+            inter.retainAll(retrievedChunks);
+            double coverage = (double) inter.size() / relChunk.size();
+            double prec = retrievedChunks.isEmpty() ? 0.0 : (double) inter.size() / retrievedChunks.size();
+            loopSuspected = coverage >= 0.8 && prec >= 0.5;
+            Set<Long> union = new HashSet<>(relChunk);
+            union.addAll(retrievedChunks);
+            overlapRatio = union.isEmpty() ? 0.0 : (double) inter.size() / union.size();
+        }
+        return new SingleEval(recall, precision, covered > 0, firstHitRank, items, loopSuspected, overlapRatio);
     }
 
     /** 数据集聚合评估：逐条调用 RetrieveService.retrieve 后汇总 */

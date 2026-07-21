@@ -187,13 +187,21 @@ function renderEval(d) {
     if (Array.isArray(d.details) && d.details.length) {
         html += '<h3 style="margin:18px 0 4px">逐条查询明细</h3>';
         html += '<p class="eval-hint">每条查询实际召回的片段（rank 为排名，✓ 表示命中你标注的相关项）。'
-            + '若某条不相关的问题召回的 ID 与你标注的完全一致，说明标注来自检索结果本身（循环标注），指标无参考意义。</p>';
+            + '系统已自动检测「循环标注」：当某条查询你标注的 chunk 与本次召回的重合度 ≥ 80% 时，'
+            + '判定为疑似循环标注（黄牌），即标注很可能直接取自检索结果本身，该条指标无参考意义。</p>';
         d.details.forEach((dq, idx) => {
             const q = dq.query != null ? dq.query : ('查询 ' + (idx + 1));
             const qrec = (typeof dq.recallAtK === 'number') ? (dq.recallAtK * 100).toFixed(1) + '%' : '-';
-            html += '<div class="eval-detail"><div class="ed-head"><b>Q' + (idx + 1) + '</b> '
+            const suspect = dq.loopSuspected === true;
+            const ratio = (typeof dq.overlapRatio === 'number' && isFinite(dq.overlapRatio))
+                ? Math.round(dq.overlapRatio * 100) : 0;
+            html += '<div class="eval-detail' + (suspect ? ' loop' : '') + '"><div class="ed-head"><b>Q' + (idx + 1) + '</b> '
                 + '<span class="ed-q">' + esc(q) + '</span>'
                 + '<span class="ed-rec">召回 ' + qrec + (dq.firstHitRank > 0 ? ' · 首命中 #' + dq.firstHitRank : '') + '</span></div>';
+            if (suspect) {
+                html += '<div class="ed-loop">⚠ 疑似循环标注：你标注的 chunk 有 ' + ratio + '% 与本次召回完全重叠，'
+                    + '很可能直接取自检索结果本身，该条指标参考意义低。请改用「问答 / 检索」选项卡从原文独立判断相关性后重新标注。</div>';
+            }
             html += '<table class="ed-table"><thead><tr><th>#</th><th>chunk</th><th>doc</th><th>相似度</th><th>命中</th></tr></thead><tbody>';
             (dq.items || []).forEach(it => {
                 html += '<tr class="' + (it.matched ? 'hit' : '') + '"><td>' + it.rank + '</td>'

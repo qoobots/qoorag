@@ -100,6 +100,8 @@ public class RetrievalEvalController {
                 itemsOut.add(im);
             }
             d.put("items", itemsOut);
+            d.put("loopSuspected", se.loopSuspected());
+            d.put("overlapRatio", se.overlapRatio());
             detailsOut.add(d);
         }
 

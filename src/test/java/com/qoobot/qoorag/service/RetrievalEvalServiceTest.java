@@ -89,4 +89,38 @@ public class RetrievalEvalServiceTest {
         assertEquals(0.0, m.recallAtK(), 1e-9);
         assertEquals(0.0, m.hitRate(), 1e-9);
     }
+
+    @Test
+    void evaluate_single_detects_loop_labeling_high_overlap() {
+        // 标注 {10,11,12,13,14}，召回 {10,11,12,13,99}：标注被召回覆盖 4/5=80% → 疑似循环标注
+        List<RetrieveChunk> results = List.of(
+                chunk(1, 10, 1, .9), chunk(2, 11, 1, .8), chunk(3, 12, 1, .7),
+                chunk(4, 13, 1, .6), chunk(5, 99, 9, .5));
+        RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
+                "q", Set.of(10L, 11L, 12L, 13L, 14L), Set.of());
+        RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 5);
+        assertEquals(true, se.loopSuspected());
+    }
+
+    @Test
+    void evaluate_single_not_loop_when_overlap_low() {
+        // 标注 {10,11}，召回 {10,20,30,40,50}：覆盖仅 1/2=50% → 非循环标注
+        List<RetrieveChunk> results = List.of(
+                chunk(1, 10, 1, .9), chunk(2, 20, 2, .8), chunk(3, 30, 3, .7),
+                chunk(4, 40, 4, .6), chunk(5, 50, 5, .5));
+        RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
+                "q", Set.of(10L, 11L), Set.of());
+        RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 5);
+        assertEquals(false, se.loopSuspected());
+    }
+
+    @Test
+    void evaluate_single_doc_only_label_not_loop() {
+        // 纯 doc 级标注（无 chunk 标注）不判定循环标注
+        List<RetrieveChunk> results = List.of(chunk(1, 10, 5, .9), chunk(2, 20, 5, .8));
+        RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
+                "q", Set.of(), Set.of(5L));
+        RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 5);
+        assertEquals(false, se.loopSuspected());
+    }
 }

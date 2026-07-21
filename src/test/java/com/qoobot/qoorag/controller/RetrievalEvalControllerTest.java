@@ -82,4 +82,21 @@ public class RetrievalEvalControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(40001));
     }
+
+    @Test
+    void eval_details_include_loop_suspected() throws Exception {
+        RetrievalEvalService.SingleEval se = new RetrievalEvalService.SingleEval(
+                1.0, 1.0, true, 1, List.of(), true, 0.8);
+        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
+                .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 1, List.of(se)));
+
+        String body = "{"
+                + "\"kbId\":2,\"topK\":5,"
+                + "\"queries\":[{\"query\":\"q1\",\"relevantChunkIds\":[10,11,12,13,14]}]"
+                + "}";
+        mockMvc.perform(post("/api/admin/eval").contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.details[0].loopSuspected").value(true))
+                .andExpect(jsonPath("$.data.details[0].overlapRatio").value(0.8));
+    }
 }
