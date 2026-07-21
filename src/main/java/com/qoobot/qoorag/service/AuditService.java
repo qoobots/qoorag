@@ -3,6 +3,10 @@ package com.qoobot.qoorag.service;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.entity.AuditLog;
 import com.qoobot.qoorag.repository.AuditLogRepository;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -54,5 +58,27 @@ public class AuditService {
 
         Long tenantId() { return tenantId; }
         Long actorId() { return actorId; }
+    }
+
+    /** 审计日志分页查询（租户隔离）：按动作/对象类型/时间范围可选过滤 */
+    public Page<AuditLog> query(Long tenantId, String action, String objectType,
+                                LocalDateTime start, LocalDateTime end, Pageable pageable) {
+        Specification<AuditLog> spec = (root, cq, cb) -> {
+            Predicate p = cb.equal(root.get("tenantId"), tenantId);
+            if (action != null && !action.isBlank()) {
+                p = cb.and(p, cb.equal(root.get("action"), action));
+            }
+            if (objectType != null && !objectType.isBlank()) {
+                p = cb.and(p, cb.equal(root.get("objectType"), objectType));
+            }
+            if (start != null) {
+                p = cb.and(p, cb.greaterThanOrEqualTo(root.get("createdAt"), start));
+            }
+            if (end != null) {
+                p = cb.and(p, cb.lessThanOrEqualTo(root.get("createdAt"), end));
+            }
+            return p;
+        };
+        return auditLogRepository.findAll(spec, pageable);
     }
 }

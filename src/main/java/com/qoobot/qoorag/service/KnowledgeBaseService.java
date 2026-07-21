@@ -1,5 +1,7 @@
 package com.qoobot.qoorag.service;
 
+import com.qoobot.qoorag.common.BizException;
+import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.entity.KbPermission;
 import com.qoobot.qoorag.entity.KnowledgeBase;
@@ -44,7 +46,7 @@ public class KnowledgeBaseService {
     public KnowledgeBase get(Long id) {
         return kbRepository.findById(id)
                 .filter(kb -> kb.getDeletedAt() == null)
-                .orElseThrow(() -> new RuntimeException("知识库不存在"));
+                .orElseThrow(() -> new BizException(ErrorCode.FORBIDDEN, "知识库不存在或无权限访问"));
     }
 
     @Transactional

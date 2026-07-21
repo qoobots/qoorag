@@ -1,20 +1,23 @@
 package com.qoobot.qoorag.service;
 
+import com.qoobot.qoorag.common.BizException;
+import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.common.SessionInfo;
 import com.qoobot.qoorag.entity.ApiKey;
 import com.qoobot.qoorag.entity.Role;
 import com.qoobot.qoorag.entity.User;
 import com.qoobot.qoorag.repository.ApiKeyRepository;
 import com.qoobot.qoorag.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /** 鉴权服务：会话登录 + API Key 校验（4.4 / 4.10） */
 @Service
@@ -23,25 +26,32 @@ public class AuthService {
     private final UserRepository userRepository;
     private final ApiKeyRepository apiKeyRepository;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final RedisTemplate<String, SessionInfo> sessionRedisTemplate;
 
-    /** 会话令牌 -> 会话信息（内存态；生产应改用 Redis 等） */
-    private final Map<String, SessionInfo> sessions = new ConcurrentHashMap<>();
+    /** 会话令牌 Redis key 前缀 */
+    private static final String SESSION_KEY_PREFIX = "qoorag:session:";
+
+    /** 会话 TTL（分钟），默认 120；可通过 qoorag.security.session-ttl-minutes 配置 */
+    @Value("${qoorag.security.session-ttl-minutes:120}")
+    private long sessionTtlMinutes;
 
     public AuthService(UserRepository userRepository, ApiKeyRepository apiKeyRepository,
-                       BCryptPasswordEncoder passwordEncoder) {
+                       BCryptPasswordEncoder passwordEncoder,
+                       RedisTemplate<String, SessionInfo> sessionRedisTemplate) {
         this.userRepository = userRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.passwordEncoder = passwordEncoder;
+        this.sessionRedisTemplate = sessionRedisTemplate;
     }
 
     public SessionInfo login(String username, String password) {
         User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
+                .orElseThrow(() -> new BizException(ErrorCode.UNAUTHENTICATED, "用户不存在"));
         if (!"ACTIVE".equals(user.getStatus()) || user.getDeletedAt() != null) {
-            throw new RuntimeException("账号已被停用");
+            throw new BizException(ErrorCode.UNAUTHENTICATED, "账号已被停用");
         }
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new RuntimeException("密码错误");
+            throw new BizException(ErrorCode.UNAUTHENTICATED, "密码错误");
         }
         SessionInfo info = new SessionInfo();
         info.userId = user.getId();
@@ -50,16 +60,21 @@ public class AuthService {
         info.isApiKey = false;
         String token = UUID.randomUUID().toString();
         info.token = token;
-        sessions.put(token, info);
+        sessionRedisTemplate.opsForValue().set(keyOf(token), info, sessionTtlMinutes, TimeUnit.MINUTES);
         return info;
     }
 
     public void logout(String token) {
-        sessions.remove(token);
+        sessionRedisTemplate.delete(keyOf(token));
     }
 
     public SessionInfo validateSession(String token) {
-        return sessions.get(token);
+        SessionInfo info = sessionRedisTemplate.opsForValue().get(keyOf(token));
+        if (info != null) {
+            // 访问续期：每次请求刷新 TTL，实现滑动过期
+            sessionRedisTemplate.expire(keyOf(token), sessionTtlMinutes, TimeUnit.MINUTES);
+        }
+        return info;
     }
 
     /** 校验 API Key（4.10）：SHA-256 比对 key_hash */
@@ -70,6 +85,8 @@ public class AuthService {
             return null;
         }
         SessionInfo info = new SessionInfo();
+        info.apiKeyId = key.getId();
+        info.apiKeyRateLimit = key.getRateLimit();
         info.kbId = key.getKbId();
         info.tenantId = key.getTenantId();
         info.isApiKey = true;
@@ -95,6 +112,10 @@ public class AuthService {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 不可用", e);
         }
+    }
+
+    private String keyOf(String token) {
+        return SESSION_KEY_PREFIX + token;
     }
 
     public record ApiKeyMaterial(String rawKey, String keyHash) {}

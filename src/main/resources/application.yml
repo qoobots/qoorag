@@ -24,6 +24,20 @@ spring:
     multipart:
       max-file-size: 50MB
       max-request-size: 50MB
+  # 监控与健康检查（P2-11）
+  jmx:
+    enabled: false
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health,info,metrics,prometheus
+    endpoint:
+      health:
+        show-details: when-authorized
+    metrics:
+      tags:
+        application: qoorag
 
 qoorag:
   security:
@@ -31,6 +45,8 @@ qoorag:
     default-admin-password: ${ADMIN_DEFAULT_PASSWORD:}
     # 知识库软删除保留期（天），过期后定时任务物理清理业务数据
     kb-retention-days: 30
+    # 会话令牌 TTL（分钟），过期后需重新登录；每次请求自动续期
+    session-ttl-minutes: 120
   # 阿里云百炼大模型（OpenAI 兼容模式）
   bailian:
     base-url: https://dashscope.aliyuncs.com/compatible-mode/v1

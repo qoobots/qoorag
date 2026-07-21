@@ -190,18 +190,41 @@ INSERT INTO roles (id, name, description) VALUES
 -- ===========================================================================
 -- 数据库层行级安全（RLS）策略 —— 4.9 的兜底隔离
 -- ---------------------------------------------------------------------------
--- 默认【不启用】，以保证骨架可直接运行。启用步骤：
---   1) 应用需在每次请求/事务开始时执行：SET LOCAL app.current_tenant = '<tenantId>';
---      （可在 AuthInterceptor 中通过当前会话的 tenantId 实现，例如借用
---       DataSource 的 Connection 或 JPA 的 @Transactional 事件设置会话变量）
---   2) 取消下方注释，执行 ALTER TABLE ... ENABLE ROW LEVEL SECURITY。
--- 策略逻辑：仅允许访问 tenant_id = current_setting('app.current_tenant') 的行。
+-- 启用方式：应用每次借出 DB 连接时由 TenantAwareDataSource 写入会话级
+-- GUC app.current_tenant（值取自请求租户）；后台任务（种子/调度）未设置租户时
+-- 写入空值，qoorag_current_tenant() 返回 NULL，策略视为旁路（全量访问）。
+-- 代码层 tenant_id 过滤仍保留，RLS 作为双保险。
 -- ===========================================================================
--- CREATE OR REPLACE FUNCTION qoorag_current_tenant() RETURNS BIGINT AS $$
---     SELECT COALESCE(NULLIF(current_setting('app.current_tenant', true), ''), '0')::BIGINT;
--- $$ LANGUAGE sql STABLE;
---
--- CREATE POLICY tenant_isolation ON knowledge_base
---     USING (tenant_id = qoorag_current_tenant());
--- ALTER TABLE knowledge_base ENABLE ROW LEVEL SECURITY;
--- （其余带 tenant_id 的表按相同模式追加策略与 ENABLE）
+CREATE OR REPLACE FUNCTION qoorag_current_tenant() RETURNS BIGINT AS $$
+    SELECT NULLIF(current_setting('app.current_tenant', true), '')::BIGINT;
+$$ LANGUAGE sql STABLE;
+
+-- 统一租户隔离策略：未设置租户（NULL）时旁路，否则仅可见本租户行
+CREATE POLICY tenant_isolation ON users
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON knowledge_base
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON kb_permission
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON document
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON chunk
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON vector_data
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON api_key
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON audit_log
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+CREATE POLICY tenant_isolation ON qa_trace
+    USING (qoorag_current_tenant() IS NULL OR tenant_id = qoorag_current_tenant());
+
+ALTER TABLE users             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_base    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kb_permission     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chunk             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vector_data       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_key           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qa_trace          ENABLE ROW LEVEL SECURITY;

@@ -3,6 +3,7 @@ package com.qoobot.qoorag.controller;
 import com.qoobot.qoorag.common.Result;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.common.SessionInfo;
+import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.dto.ChatResponse;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
@@ -27,13 +28,16 @@ public class ApiController {
     private final QaTraceRepository qaTraceRepository;
     private final RetrieveService retrieveService;
     private final ChatService chatService;
+    private final MetricsConfig.RagMetrics ragMetrics;
 
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
-                         ChatService chatService) {
+                         ChatService chatService,
+                         MetricsConfig.RagMetrics ragMetrics) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
+        this.ragMetrics = ragMetrics;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -49,8 +53,10 @@ public class ApiController {
             topK = Math.max(1, Math.min(topK, 100)); // 夹逼到 1~100
         }
 
+        long start = System.currentTimeMillis();
         try {
             List<RetrieveChunk> chunks = retrieveService.retrieve(query, topK, ctx.getKbId(), ctx.getTenantId());
+            ragMetrics.recordRetrieve(System.currentTimeMillis() - start, !chunks.isEmpty());
             return Result.ok(Map.of(
                     "query", query,
                     "topK", topK,
@@ -75,6 +81,7 @@ public class ApiController {
             topK = Math.max(1, Math.min(topK, 100));
         }
 
+        long start = System.currentTimeMillis();
         try {
             // 1. 检索召回
             List<RetrieveChunk> chunks = retrieveService.retrieve(query, topK, ctx.getKbId(), ctx.getTenantId());
@@ -111,6 +118,7 @@ public class ApiController {
             trace.setCreatedAt(LocalDateTime.now());
             qaTraceRepository.save(trace);
 
+            ragMetrics.recordChat(System.currentTimeMillis() - start);
             return Result.ok(chatResponse);
         } catch (Exception e) {
             log.error("问答失败: {}", e.getMessage(), e);
