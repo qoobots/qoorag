@@ -15,6 +15,7 @@ target/
 # 日志与本地产物
 *.log
 *.tmp
+commit_msg.txt
 
 # 操作系统
 .DS_Store
