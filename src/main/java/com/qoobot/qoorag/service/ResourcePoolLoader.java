@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.function.Consumer;
@@ -17,6 +18,7 @@ import java.util.function.Consumer;
  * DB 表缺失或读取异常时优雅降级为 application.yml 默认值，不阻断启动。
  */
 @Component
+@Order(10)
 public class ResourcePoolLoader implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ResourcePoolLoader.class);

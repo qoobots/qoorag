@@ -11,7 +11,8 @@ import java.util.*;
 
 /**
  * 向量化服务：调用百炼 Embedding API（OpenAI 兼容模式）
- * text-embedding-v2，固定 1536 维
+ * 维度由 embedding 模型决定（text-embedding-v3/v4 = 1024 维，v1/v2/async-v2 = 1536 维），
+ * 启动期由 VectorDimensionReconciler 对齐 vector_data.embedding 列维度。
  */
 @Service
 public class EmbeddingService {

@@ -107,14 +107,15 @@ CREATE TABLE IF NOT EXISTS chunk (
 CREATE INDEX IF NOT EXISTS idx_chunk_kb ON chunk(kb_id);
 
 -- ---------------------------------------------------------------------------
--- 向量（pgvector；维度 1536，按实际 embedding 模型调整）
+-- 向量（pgvector；维度 1024，匹配 text-embedding-v3/v4；切换模型时由启动期
+--       VectorDimensionReconciler 自动 ALTER 对齐，或手动改为 vector(1536)）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS vector_data (
     id          BIGSERIAL PRIMARY KEY,
     chunk_id    BIGINT NOT NULL REFERENCES chunk(id),
     kb_id       BIGINT NOT NULL REFERENCES knowledge_base(id),
     tenant_id   BIGINT NOT NULL REFERENCES tenant(id),
-    embedding   vector(1536),
+    embedding   vector(1024),
     created_at  TIMESTAMP DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_vector_kb ON vector_data(kb_id);
@@ -255,5 +256,5 @@ INSERT INTO resource_pool_config (category, config_key, config_value, masked, de
     ('EMBEDDING',  'embedding_model',     '', false, '向量化模型名'),
     ('EMBEDDING',  'embedding_batch_size', '', false, '向量化批大小（单次 API 调用文本条数）'),
     ('VECTOR',     'type',                '', false, '向量库类型（当前固定 pgvector）'),
-    ('VECTOR',     'dimension',           '', false, '向量维度（当前固定 1536，需与 embedding 模型一致）')
+    ('VECTOR',     'dimension',           '', false, '向量维度（留空则按 embedding 模型自动推导：v3/v4=1024，v1/v2/async=1536；也可显式指定）')
     ON CONFLICT (category, config_key) DO NOTHING;

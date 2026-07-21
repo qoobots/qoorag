@@ -28,7 +28,7 @@ public class VectorData {
     private Long tenantId;
 
     @Type(PGvectorUserType.class)
-    @Column(name = "embedding", columnDefinition = "vector(1536)")
+    @Column(name = "embedding", columnDefinition = "vector(1024)")
     private PGvector embedding;
 
     @Column(name = "created_at")
