@@ -1,5 +1,6 @@
 package com.qoobot.qoorag.controller;
 
+import com.qoobot.qoorag.common.DesensitizeUtil;
 import com.qoobot.qoorag.common.Result;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.dto.AuditLogQuery;
@@ -75,8 +76,8 @@ public class AuditController {
                         csv(log.getAction()),
                         csv(log.getObjectType()),
                         csv(log.getObjectId()),
-                        csv(log.getBeforeValue()),
-                        csv(log.getAfterValue()),
+                        csv(DesensitizeUtil.maskText(log.getBeforeValue())),
+                        csv(DesensitizeUtil.maskText(log.getAfterValue())),
                         csv(log.getCreatedAt() == null ? "" : log.getCreatedAt().format(fmt))
                 ));
             }

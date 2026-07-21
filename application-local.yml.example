@@ -26,3 +26,8 @@ ADMIN_DEFAULT_PASSWORD: your_admin_password_here
 # 阿里云百炼 API Key（在 https://dashscope.console.aliyun.com 获取）
 # 对应环境变量 ALI-API-KEY
 ALI-API-KEY: sk-your-bailian-api-key-here
+
+# 阿里云内容安全（绿网）密钥（#18；默认关闭，仅开启内容安全时需要）
+# 对应环境变量 CONTENT_SAFETY_ALIYUN_AK / CONTENT_SAFETY_ALIYUN_SK
+CONTENT_SAFETY_ALIYUN_AK: your_aliyun_content_safety_ak
+CONTENT_SAFETY_ALIYUN_SK: your_aliyun_content_safety_sk

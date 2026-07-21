@@ -1,5 +1,7 @@
 package com.qoobot.qoorag.service;
 
+import com.qoobot.qoorag.common.BizException;
+import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.config.BailianConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,10 +22,12 @@ public class ChatService {
 
     private final RestTemplate restTemplate;
     private final BailianConfig config;
+    private final ContentSafetyService contentSafety;
 
-    public ChatService(RestTemplate restTemplate, BailianConfig config) {
+    public ChatService(RestTemplate restTemplate, BailianConfig config, ContentSafetyService contentSafety) {
         this.restTemplate = restTemplate;
         this.config = config;
+        this.contentSafety = contentSafety;
     }
 
     /**
@@ -35,6 +39,12 @@ public class ChatService {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> chat(String query, List<String> contextChunks) {
+        // 0. 内容安全检测（#18；关闭时 fail-open 放行）
+        ContentSafetyService.Result safety = contentSafety.checkText(query);
+        if (safety.verdict == ContentSafetyService.Verdict.BLOCKED) {
+            throw new BizException(ErrorCode.CONTENT_BLOCKED, "提问内容命中内容安全拦截：" + safety.reason);
+        }
+
         // 1. 构建 RAG Prompt
         StringBuilder contextBuilder = new StringBuilder();
         for (int i = 0; i < contextChunks.size(); i++) {

@@ -19,7 +19,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -85,5 +85,28 @@ public class AuditControllerTest {
         assertTrue(csv.contains("id,tenant_id,actor_id,action,object_type,object_id"), "应包含 CSV 表头");
         assertTrue(csv.contains("CREATE"), "应包含审计动作");
         assertTrue(csv.contains("\"1\""), "应包含 object_id");
+    }
+
+    @Test
+    void export_masks_pii_in_values() throws Exception {
+        AuditLog log = new AuditLog();
+        log.setId(2L);
+        log.setTenantId(7L);
+        log.setAction("CREATE_USER");
+        log.setObjectType("User");
+        log.setObjectId("5");
+        log.setBeforeValue(null);
+        log.setAfterValue("手机13812345678，身份证110101199003071234");
+        log.setCreatedAt(LocalDateTime.of(2026, 1, 1, 12, 0, 0));
+        Page<AuditLog> page = new PageImpl<>(List.of(log));
+        when(auditService.query(eq(7L), isNull(), isNull(), isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(page);
+
+        MvcResult res = mockMvc.perform(get("/api/admin/audit/export")).andReturn();
+        String csv = res.getResponse().getContentAsString();
+
+        assertTrue(csv.contains("138****5678"), "手机号应脱敏");
+        assertTrue(csv.contains("110101********1234"), "身份证应脱敏");
+        assertFalse(csv.contains("13812345678"), "原始手机号不应出现");
     }
 }

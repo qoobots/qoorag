@@ -1,5 +1,7 @@
 package com.qoobot.qoorag.service;
 
+import com.qoobot.qoorag.common.BizException;
+import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.entity.Chunk;
 import com.qoobot.qoorag.entity.Document;
 import com.qoobot.qoorag.entity.VectorData;
@@ -34,17 +36,20 @@ public class IngestService {
     private final VectorDataRepository vectorDataRepository;
     private final DocumentParserService parserService;
     private final EmbeddingService embeddingService;
+    private final ContentSafetyService contentSafety;
 
     public IngestService(DocumentRepository documentRepository,
                          ChunkRepository chunkRepository,
                          VectorDataRepository vectorDataRepository,
                          DocumentParserService parserService,
-                         EmbeddingService embeddingService) {
+                         EmbeddingService embeddingService,
+                         ContentSafetyService contentSafety) {
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.vectorDataRepository = vectorDataRepository;
         this.parserService = parserService;
         this.embeddingService = embeddingService;
+        this.contentSafety = contentSafety;
     }
 
     /**
@@ -72,6 +77,12 @@ public class IngestService {
             String text = parserService.parse(file);
             if (text == null || text.isBlank()) {
                 throw new RuntimeException("文档内容为空，无法解析");
+            }
+
+            // 2.1 内容安全检测（#18；关闭时 fail-open 放行）
+            ContentSafetyService.Result safety = contentSafety.checkText(text);
+            if (safety.verdict == ContentSafetyService.Verdict.BLOCKED) {
+                throw new BizException(ErrorCode.CONTENT_BLOCKED, "文档内容命中内容安全拦截：" + safety.reason);
             }
 
             // 3. 文本分块

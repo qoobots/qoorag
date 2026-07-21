@@ -47,6 +47,16 @@ qoorag:
     kb-retention-days: 30
     # 会话令牌 TTL（分钟），过期后需重新登录；每次请求自动续期
     session-ttl-minutes: 120
+    # 审计日志留存期（天），超过则定时物理清理；默认 180 天（6 个月，#18）
+    audit-retention-days: 180
+  # 内容安全（#18）：默认关闭；开启需配置阿里云密钥。关闭或异常时 fail-open 放行。
+  content-safety:
+    enabled: false
+    aliyun:
+      access-key: ${CONTENT_SAFETY_ALIYUN_AK:}
+      secret-key: ${CONTENT_SAFETY_ALIYUN_SK:}
+      region: cn-shanghai
+      endpoint: https://green.cn-shanghai.aliyuncs.com
   # 阿里云百炼大模型（OpenAI 兼容模式）
   bailian:
     base-url: https://dashscope.aliyuncs.com/compatible-mode/v1

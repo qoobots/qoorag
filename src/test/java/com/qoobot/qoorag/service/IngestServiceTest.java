@@ -12,6 +12,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
 /** IngestService 单元测试：重点覆盖纯逻辑分块 splitText（仓库/Embedding 均 mock） */
 @ExtendWith(MockitoExtension.class)
@@ -21,13 +24,15 @@ public class IngestServiceTest {
     @Mock ChunkRepository chunkRepository;
     @Mock VectorDataRepository vectorDataRepository;
     @Mock EmbeddingService embeddingService;
+    @Mock ContentSafetyService contentSafety;
 
     private IngestService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(contentSafety.checkText(any())).thenReturn(ContentSafetyService.Result.safe());
         service = new IngestService(documentRepository, chunkRepository, vectorDataRepository,
-                new DocumentParserService(), embeddingService);
+                new DocumentParserService(), embeddingService, contentSafety);
     }
 
     @Test
