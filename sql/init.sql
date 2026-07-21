@@ -228,3 +228,32 @@ ALTER TABLE vector_data       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_key           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE qa_trace          ENABLE ROW LEVEL SECURITY;
+
+-- ===========================================================================
+-- 资源池配置（#12；平台级全局配置，不绑定租户，不启用 RLS）
+-- 仅作为用户对 application.yml 默认值的「显式覆盖层」：
+--   config_value 为空 -> 启动加载时不覆盖 yml；用户在 UI 填写后下次启动生效。
+--   masked=true 的项（如 api_key）在管理界面脱敏展示。
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS resource_pool_config (
+    id           BIGSERIAL PRIMARY KEY,
+    category     VARCHAR(32)  NOT NULL,                      -- LLM / EMBEDDING / VECTOR
+    config_key   VARCHAR(64)  NOT NULL,
+    config_value TEXT,
+    masked       BOOLEAN      NOT NULL DEFAULT FALSE,
+    description  VARCHAR(255),
+    updated_at   TIMESTAMP    DEFAULT now(),
+    UNIQUE (category, config_key)
+);
+
+-- 种子：仅建立 key 占位 + 描述 + 脱敏标记，value 留空（不覆盖 yml 默认值）。
+-- 用户在资源池管理界面填写后，重启应用即从 DB 加载生效。
+INSERT INTO resource_pool_config (category, config_key, config_value, masked, description) VALUES
+    ('LLM',        'base_url',            '', false, '百炼兼容模式 Base URL（OpenAI 兼容）'),
+    ('LLM',        'api_key',             '', true,  '百炼 API Key（环境变量 ALI-API-KEY 注入；填写后覆盖）'),
+    ('LLM',        'chat_model',          '', false, '对话生成模型名'),
+    ('EMBEDDING',  'embedding_model',     '', false, '向量化模型名'),
+    ('EMBEDDING',  'embedding_batch_size', '', false, '向量化批大小（单次 API 调用文本条数）'),
+    ('VECTOR',     'type',                '', false, '向量库类型（当前固定 pgvector）'),
+    ('VECTOR',     'dimension',           '', false, '向量维度（当前固定 1536，需与 embedding 模型一致）')
+    ON CONFLICT (category, config_key) DO NOTHING;

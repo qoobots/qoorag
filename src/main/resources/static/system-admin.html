@@ -37,6 +37,13 @@
             <tbody></tbody>
         </table>
     </div>
+    <div class="card">
+        <h2>资源池配置</h2>
+        <p class="hint">LLM / Embedding / 向量库配置。修改后需<strong>重启应用</strong>生效（仅启动期加载）。
+           敏感项（如 API Key）已脱敏，留空或不修改则保持原值。</p>
+        <div id="rpContainer"></div>
+        <div style="margin-top:12px"><button onclick="saveResourcePool()">保存资源池配置</button></div>
+    </div>
 </div>
 <script src="/js/api.js"></script>
 <script>
@@ -81,7 +88,47 @@ function logout() {
         location.href = '/login.html';
     });
 }
-loadUsers(); loadRoles();
+loadUsers(); loadRoles(); loadResourcePool();
+
+let rpData = {};
+function esc(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function loadResourcePool() {
+    const r = await api('GET', '/api/admin/resource-pool');
+    rpData = r.data || {};
+    const container = document.getElementById('rpContainer');
+    container.innerHTML = '';
+    Object.keys(rpData).forEach(category => {
+        const section = document.createElement('div');
+        section.innerHTML = '<h3>' + esc(category) + '</h3>';
+        (rpData[category] || []).forEach(item => {
+            const wrap = document.createElement('div');
+            const inputType = item.masked ? 'password' : 'text';
+            wrap.innerHTML = '<label title="' + esc(item.configKey) + '">' + esc(item.description || item.configKey) + '</label>'
+                + '<input id="rp_' + esc(category) + '_' + esc(item.configKey) + '" type="' + inputType + '" value="' + esc(item.configValue) + '">';
+            section.appendChild(wrap);
+        });
+        container.appendChild(section);
+    });
+}
+async function saveResourcePool() {
+    for (const category of Object.keys(rpData)) {
+        for (const item of (rpData[category] || [])) {
+            const el = document.getElementById('rp_' + category + '_' + item.configKey);
+            if (!el) continue;
+            await api('PUT', '/api/admin/resource-pool', {
+                category: category,
+                configKey: item.configKey,
+                configValue: el.value,
+                description: item.description
+            });
+        }
+    }
+    alert('保存成功，重启应用后配置生效');
+    loadResourcePool();
+}
 </script>
 </body>
 </html>
