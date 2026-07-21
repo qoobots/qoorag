@@ -111,6 +111,16 @@ const RP_PRESETS = {
     chat_model: {
         select: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-long', 'deepseek-v3', 'deepseek-r1'],
         hint: '百炼/兼容 OpenAI 协议的对话模型；默认推荐 qwen-plus。'
+    },
+    base_url: {
+        select: [
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'https://dashscope.aliyuncs.com/api/v1',
+            'https://api.openai.com/v1',
+            'http://localhost:11434/v1',
+            'http://localhost:8000/v1'
+        ],
+        hint: '百炼兼容模式 Base URL（OpenAI 兼容协议）；本地或第三方网关填对应地址。'
     }
 };
 
