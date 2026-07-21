@@ -1,0 +1,137 @@
+[
+  {
+    "query": "大语言模型（LLM）时代，企业创新能力面临哪些结构性挑战？本研究要回答什么核心问题？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [10]
+  },
+  {
+    "query": "动态能力理论（Teece）的 Sensing–Seizing–Transforming 三环节分别指什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [12]
+  },
+  {
+    "query": "什么是人–AI 协同创新模式（HACI）？它有哪些可观测的行为分类？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [13]
+  },
+  {
+    "query": "本研究提出了哪些研究假设（H1–H4）？假设体系是怎样推导出来的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [14]
+  },
+  {
+    "query": "论文采用了怎样的实验设计？是否为 2×2×前后测的田野实验？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [15]
+  },
+  {
+    "query": "实证研究的样本规模是多少？纳入了多少家企业、多少个创新团队参与实验？",
+    "relevantChunkIds": [893, 894],
+    "relevantDocIds": [16]
+  },
+  {
+    "query": "研究发现 AI 协同是在构建还是削弱企业创新能力？如何回应'替代焦虑'？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [18]
+  },
+  {
+    "query": "这篇关于企业智能化创新的论文，主要结论和理论贡献是什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [19]
+  },
+  {
+    "query": "什么是智能体（Agent）？它和企业里的大语言模型是什么关系？",
+    "relevantChunkIds": [1023, 1024],
+    "relevantDocIds": [28]
+  },
+  {
+    "query": "AI 能不能替代人类的想象力和创造力？'砖头有多少种用途'的发散性思维测试说明了什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [29]
+  },
+  {
+    "query": "法律 AI 公司 Harvey 是如何崛起的？它的估值和融资历程是怎样的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [30, 39]
+  },
+  {
+    "query": "企业应该如何制定智能化战略？为什么大多数企业只有零散动作而没有真正的战略？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [31]
+  },
+  {
+    "query": "使用 Copilot 等 AI 辅助编程，开发效率能提升多少？",
+    "relevantChunkIds": [1107, 1108],
+    "relevantDocIds": [33]
+  },
+  {
+    "query": "Amazon 的 AI 招聘工具为什么被叫停？它反映了什么算法偏见问题？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [36, 40]
+  },
+  {
+    "query": "企业 AI 基础设施由哪几部分构成？为什么数据底座比模型本身更重要？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [37]
+  },
+  {
+    "query": "为什么大多数 AI 项目会失败？约 85% 的 AI 项目未能规模化的原因是什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [38]
+  },
+  {
+    "query": "什么是 AI-Native 企业？它和传统企业做智能化有什么本质不同？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [39]
+  },
+  {
+    "query": "Apple Card 信用卡事件暴露了怎样的算法性别歧视问题？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [40]
+  },
+  {
+    "query": "如何自评企业的智能化成熟度？成熟度问卷怎么使用？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [43]
+  },
+  {
+    "query": "企业做 AI 工具与平台选型时，有哪些主流大模型和平台可选？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [44]
+  },
+  {
+    "query": "什么是 RAG（检索增强生成）？它有什么作用？",
+    "relevantChunkIds": [1236, 1237],
+    "relevantDocIds": [45]
+  },
+  {
+    "query": "《打造伟大的产品》这本书的作者是谁？他的背景是什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [49]
+  },
+  {
+    "query": "这本书的前言主要讲了什么？作者为什么写这本书？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [47]
+  },
+  {
+    "query": "Qoorag 的 PDF 解析测试文档里写了什么内容？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [7]
+  },
+  {
+    "query": "这篇企业智能化论文的中文摘要讲了什么核心观点？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [25]
+  },
+  {
+    "query": "认知重构量表（CRS）包含哪些维度和题项？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [21]
+  },
+  {
+    "query": "吴军在《打造伟大的产品》中提出的好产品到伟大产品的系统方法论是怎样的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [8]
+  }
+]
