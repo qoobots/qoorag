@@ -12,8 +12,8 @@
         <label>选择知识库</label>
         <select id="kbSel" onchange="loadDocs()"></select>
         <div style="margin-top:12px">
-            <label>上传文档（支持 .txt / .md / .pdf）</label>
-            <input id="fileInput" type="file" accept=".txt,.md,.pdf">
+            <label>上传文档（支持 .txt / .md / .pdf，可多选）</label>
+            <input id="fileInput" type="file" accept=".txt,.md,.pdf" multiple>
             <div style="margin-top:8px"><button onclick="upload()">上传并入库</button></div>
             <p class="muted">上传后后端异步解析、切片、向量化（依赖 Embedding 资源池）。状态会变为 PROCESSING → INDEXED / FAILED。</p>
         </div>
@@ -61,11 +61,20 @@ async function upload() {
     const kbId = document.getElementById('kbSel').value;
     const fileInput = document.getElementById('fileInput');
     if (!kbId) { alert('请先选择知识库'); return; }
-    if (!fileInput.files.length) { alert('请选择要上传的文件'); return; }
+    const files = Array.from(fileInput.files);
+    if (!files.length) { alert('请选择要上传的文件'); return; }
     try {
-        const r = await uploadDocument(kbId, fileInput.files[0]);
+        const r = await uploadDocument(kbId, files);
         if (r.code === 0) {
-            alert('上传成功，文档状态: ' + r.data.status);
+            const ok = r.data.success || 0;
+            const fail = r.data.failed || 0;
+            let msg = '上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个';
+            if (fail > 0) {
+                const errs = (r.data.results || []).filter(x => x.status === 'FAILED')
+                    .map(x => '· ' + x.name + '：' + (x.error || '未知错误')).join('\n');
+                msg += '\n\n失败明细：\n' + errs;
+            }
+            alert(msg);
             fileInput.value = '';
             loadDocs();
         } else {

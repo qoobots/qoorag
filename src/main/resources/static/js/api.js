@@ -37,10 +37,11 @@ async function api(method, path, body, tokenOverride, noAuthRedirect) {
     return data;
 }
 
-/** 上传文档（multipart），使用会话令牌 */
-async function uploadDocument(kbId, file) {
+/** 上传文档（multipart，支持多文件），使用会话令牌。files 可为单个 File 或 File 数组 */
+async function uploadDocument(kbId, files) {
     const form = new FormData();
-    form.append('file', file);
+    const arr = Array.isArray(files) ? files : [files];
+    arr.forEach(f => form.append('files', f));
     return api('POST', '/api/kb/' + kbId + '/documents', form);
 }
 

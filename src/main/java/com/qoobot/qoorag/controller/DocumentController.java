@@ -11,6 +11,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,35 +41,61 @@ public class DocumentController {
         }
     }
 
-    /** 上传文档并异步入库 */
+    /** 上传文档并异步入库（支持一次上传多个文件） */
     @PostMapping("/{kbId}/documents")
     public Result upload(
             @PathVariable Long kbId,
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam(value = "files", required = false) List<MultipartFile> files) {
         requireKbAdmin();
         Long tenantId = SecurityContext.get().getTenantId();
 
-        if (file.isEmpty()) {
-            return Result.fail("文件为空");
+        if (files == null || files.isEmpty()) {
+            return Result.fail("请选择要上传的文件");
         }
 
-        String filename = file.getOriginalFilename();
-        if (filename == null) {
-            return Result.fail("文件名为空");
+        List<Map<String, Object>> results = new ArrayList<>();
+        int successCount = 0;
+        for (MultipartFile file : files) {
+            Map<String, Object> one = new HashMap<>();
+            String filename = file.getOriginalFilename();
+            one.put("name", filename);
+            if (file.isEmpty()) {
+                one.put("status", "FAILED");
+                one.put("error", "文件为空");
+            } else if (filename == null) {
+                one.put("status", "FAILED");
+                one.put("error", "文件名为空");
+            } else {
+                String lowerName = filename.toLowerCase();
+                if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".md") && !lowerName.endsWith(".pdf")) {
+                    one.put("status", "FAILED");
+                    one.put("error", "不支持的格式，仅支持 .txt / .md / .pdf");
+                } else {
+                    try {
+                        log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());
+                        Document doc = ingestService.ingest(file, kbId, tenantId);
+                        auditService.log("UPLOAD_DOCUMENT", "Document", String.valueOf(doc.getId()), null, filename);
+                        one.put("id", doc.getId());
+                        one.put("status", doc.getStatus());
+                    } catch (Exception e) {
+                        one.put("status", "FAILED");
+                        one.put("error", e.getMessage());
+                    }
+                }
+            }
+            if (!"FAILED".equals(one.get("status"))) {
+                successCount++;
+            }
+            results.add(one);
         }
 
-        String lowerName = filename.toLowerCase();
-        if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".md") && !lowerName.endsWith(".pdf")) {
-            return Result.fail("仅支持 .txt、.md 和 .pdf 格式，当前文件: " + filename);
-        }
-
-        log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());
-        Document doc = ingestService.ingest(file, kbId, tenantId);
-        auditService.log("UPLOAD_DOCUMENT", "Document", String.valueOf(doc.getId()), null, filename);
+        int failedCount = results.size() - successCount;
+        log.info("批量上传完成：kbId={}, 总数={}, 成功={}, 失败={}", kbId, results.size(), successCount, failedCount);
         return Result.ok(Map.of(
-                "id", doc.getId(),
-                "name", doc.getName(),
-                "status", doc.getStatus()
+                "total", results.size(),
+                "success", successCount,
+                "failed", failedCount,
+                "results", results
         ));
     }
 
