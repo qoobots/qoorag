@@ -32,18 +32,23 @@ public class RetrievalEvalService {
         }
     }
 
-    /** 聚合指标：平均召回率 / 平均准确率 / 命中率 / 平均倒数排名(MRR) / 样本数 */
-    public record EvalMetrics(double recallAtK, double precisionAtK, double hitRate, double mrr, int count) {}
+    /** 单条查询中实际召回的片段及命中情况（逐条明细诊断用） */
+    public record RetrievedItem(long chunkId, long documentId, double score, boolean matched, int rank) {}
+
+    /** 聚合指标：平均召回率 / 平均准确率 / 命中率 / 平均倒数排名(MRR) / 样本数 / 逐条明细 */
+    public record EvalMetrics(double recallAtK, double precisionAtK, double hitRate, double mrr, int count,
+                               List<SingleEval> details) {}
 
     /** 单条评估结果 */
-    public record SingleEval(double recallAtK, double precisionAtK, boolean hit, int firstHitRank) {}
+    public record SingleEval(double recallAtK, double precisionAtK, boolean hit, int firstHitRank,
+                             List<RetrievedItem> items) {}
 
     /** 单条查询评估：在 topK 范围内比对相关性 */
     public SingleEval evaluateSingle(LabeledQuery q, List<RetrieveChunk> results, int topK) {
         int relevantTotal = countRelevant(q);
         if (relevantTotal == 0 || topK <= 0) {
             // 无标注相关项（或 K 非法）无法计算召回，置 0
-            return new SingleEval(0.0, 0.0, false, -1);
+            return new SingleEval(0.0, 0.0, false, -1, List.of());
         }
         Set<Long> relChunk = q.relevantChunkIds();
         Set<Long> relDoc = q.relevantDocIds();
@@ -52,11 +57,13 @@ public class RetrievalEvalService {
         int hits = 0;
         int firstHitRank = -1;
         int limit = Math.min(topK, results.size());
+        List<RetrievedItem> items = new ArrayList<>(limit);
         for (int i = 0; i < limit; i++) {
             RetrieveChunk c = results.get(i);
             boolean matchChunk = relChunk.contains(c.getChunkId());
             boolean matchDoc = relDoc.contains(c.getDocumentId());
-            if (matchChunk || matchDoc) {
+            boolean match = matchChunk || matchDoc;
+            if (match) {
                 hits++;
                 if (firstHitRank < 0) {
                     firstHitRank = i + 1;
@@ -69,30 +76,33 @@ public class RetrievalEvalService {
                     coveredDocs.add(c.getDocumentId());
                 }
             }
+            items.add(new RetrievedItem(c.getChunkId(), c.getDocumentId(), c.getScore(), match, i + 1));
         }
         // 召回率 = 被覆盖的不同相关项数 / 标注相关总数（covered ⊆ relevantTotal，故恒 ≤ 100%）
         int covered = coveredChunks.size() + coveredDocs.size();
         double recall = (double) covered / relevantTotal;
         double precision = (double) hits / topK; // 标准 precision@K：相关命中数 / K（hits≤K，故恒 ≤ 100%）
-        return new SingleEval(recall, precision, covered > 0, firstHitRank);
+        return new SingleEval(recall, precision, covered > 0, firstHitRank, items);
     }
 
     /** 数据集聚合评估：逐条调用 RetrieveService.retrieve 后汇总 */
     public EvalMetrics evaluateDataset(List<LabeledQuery> dataset, int topK, Long kbId, Long tenantId) {
         if (dataset == null || dataset.isEmpty()) {
-            return new EvalMetrics(0.0, 0.0, 0.0, 0.0, 0);
+            return new EvalMetrics(0.0, 0.0, 0.0, 0.0, 0, List.of());
         }
         double sumRecall = 0, sumPrecision = 0, sumHit = 0, sumRR = 0;
+        List<SingleEval> details = new ArrayList<>(dataset.size());
         for (LabeledQuery q : dataset) {
             List<RetrieveChunk> results = retrieveService.retrieve(q.query(), topK, kbId, tenantId);
             SingleEval se = evaluateSingle(q, results, topK);
+            details.add(se);
             sumRecall += se.recallAtK();
             sumPrecision += se.precisionAtK();
             sumHit += se.hit() ? 1 : 0;
             sumRR += se.firstHitRank() > 0 ? 1.0 / se.firstHitRank() : 0.0;
         }
         int n = dataset.size();
-        return new EvalMetrics(sumRecall / n, sumPrecision / n, sumHit / n, sumRR / n, n);
+        return new EvalMetrics(sumRecall / n, sumPrecision / n, sumHit / n, sumRR / n, n, details);
     }
 
     /** 去重计数相关项（chunk 与 doc 可能重叠） */

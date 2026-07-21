@@ -78,6 +78,31 @@ public class RetrievalEvalController {
         }
 
         RetrievalEvalService.EvalMetrics metrics = evalService.evaluateDataset(dataset, topK, kbId, tenantId);
+
+        List<Map<String, Object>> detailsOut = new ArrayList<>();
+        for (int i = 0; i < metrics.details().size(); i++) {
+            RetrievalEvalService.SingleEval se = metrics.details().get(i);
+            RetrievalEvalService.LabeledQuery lq = dataset.get(i);
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("query", lq.query());
+            d.put("recallAtK", se.recallAtK());
+            d.put("precisionAtK", se.precisionAtK());
+            d.put("hit", se.hit());
+            d.put("firstHitRank", se.firstHitRank());
+            List<Map<String, Object>> itemsOut = new ArrayList<>();
+            for (RetrievalEvalService.RetrievedItem it : se.items()) {
+                Map<String, Object> im = new LinkedHashMap<>();
+                im.put("rank", it.rank());
+                im.put("chunkId", it.chunkId());
+                im.put("documentId", it.documentId());
+                im.put("score", it.score());
+                im.put("matched", it.matched());
+                itemsOut.add(im);
+            }
+            d.put("items", itemsOut);
+            detailsOut.add(d);
+        }
+
         return Result.ok(Map.of(
                 "kbId", kbId,
                 "topK", topK,
@@ -85,7 +110,8 @@ public class RetrievalEvalController {
                 "precisionAtK", metrics.precisionAtK(),
                 "hitRate", metrics.hitRate(),
                 "mrr", metrics.mrr(),
-                "count", metrics.count()
+                "count", metrics.count(),
+                "details", detailsOut
         ));
     }
 

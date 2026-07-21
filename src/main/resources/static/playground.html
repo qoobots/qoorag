@@ -183,6 +183,27 @@ function renderEval(d) {
     if (allZero && (d.count != null ? d.count : 0) > 0) {
         html += '<div class="eval-warn">⚠ 召回率为 0：请确认标注的 chunkId / documentId 是该知识库中真实存在的片段 ID。可在「问答 / 检索」选项卡检索相关查询，从结果片段复制真实 chunk # 与 doc # 后填入。</div>';
     }
+    // 逐条查询明细
+    if (Array.isArray(d.details) && d.details.length) {
+        html += '<h3 style="margin:18px 0 4px">逐条查询明细</h3>';
+        html += '<p class="eval-hint">每条查询实际召回的片段（rank 为排名，✓ 表示命中你标注的相关项）。'
+            + '若某条不相关的问题召回的 ID 与你标注的完全一致，说明标注来自检索结果本身（循环标注），指标无参考意义。</p>';
+        d.details.forEach((dq, idx) => {
+            const q = dq.query != null ? dq.query : ('查询 ' + (idx + 1));
+            const qrec = (typeof dq.recallAtK === 'number') ? (dq.recallAtK * 100).toFixed(1) + '%' : '-';
+            html += '<div class="eval-detail"><div class="ed-head"><b>Q' + (idx + 1) + '</b> '
+                + '<span class="ed-q">' + esc(q) + '</span>'
+                + '<span class="ed-rec">召回 ' + qrec + (dq.firstHitRank > 0 ? ' · 首命中 #' + dq.firstHitRank : '') + '</span></div>';
+            html += '<table class="ed-table"><thead><tr><th>#</th><th>chunk</th><th>doc</th><th>相似度</th><th>命中</th></tr></thead><tbody>';
+            (dq.items || []).forEach(it => {
+                html += '<tr class="' + (it.matched ? 'hit' : '') + '"><td>' + it.rank + '</td>'
+                    + '<td>#' + it.chunkId + '</td><td>#' + it.documentId + '</td>'
+                    + '<td>' + Number(it.score).toFixed(3) + '</td>'
+                    + '<td>' + (it.matched ? '✓' : '—') + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+        });
+    }
     html += '<p class="eval-hint" style="margin-top:14px">样本数（查询条数）：<b>'
         + (d.count != null ? d.count : 0) + '</b>　·　TopK：' + (d.topK != null ? d.topK : 5)
         + '　·　知识库 ID：' + (d.kbId != null ? d.kbId : '-') + '</p>';

@@ -472,6 +472,15 @@ tbody tr:last-child td { border-bottom: none; }
     background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
     font-size: 13px; line-height: 1.6;
 }
+.eval-detail { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.eval-detail .ed-head { padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid var(--border); font-size: 13px; }
+.eval-detail .ed-q { color: var(--text); margin: 0 8px; word-break: break-all; }
+.eval-detail .ed-rec { color: var(--primary); font-weight: 600; }
+.ed-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ed-table th, .ed-table td { padding: 7px 14px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+.ed-table th { color: var(--text-muted); font-weight: 500; background: #fff; }
+.ed-table tr.hit td { background: #f0fdf4; }
+.ed-table tr.hit td:last-child { color: #16a34a; font-weight: 700; }
 
 /* =====================================================================
    响应式

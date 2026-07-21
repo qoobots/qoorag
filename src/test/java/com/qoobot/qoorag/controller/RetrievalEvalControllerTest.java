@@ -5,6 +5,7 @@ import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.common.SessionInfo;
 import com.qoobot.qoorag.service.RetrievalEvalService;
 import org.junit.jupiter.api.AfterEach;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -58,7 +59,7 @@ public class RetrievalEvalControllerTest {
     @Test
     void eval_returns_aggregated_metrics() throws Exception {
         when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
-                .thenReturn(new RetrievalEvalService.EvalMetrics(0.5, 0.2, 0.5, 0.5, 2));
+                .thenReturn(new RetrievalEvalService.EvalMetrics(0.5, 0.2, 0.5, 0.5, 2, List.of()));
 
         String body = "{"
                 + "\"kbId\":2,\"topK\":5,"
