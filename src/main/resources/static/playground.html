@@ -65,8 +65,8 @@ async function send() {
     const out = document.getElementById('result');
     out.innerHTML = '<p class="muted">请求中…</p>';
     try {
-        const r = await api('POST', path, { query, topK: 5 }, apiKey);
-        if (r.code !== 0) { alert('调用失败: ' + r.message); out.innerHTML = '<p class="muted">调用失败</p>'; return; }
+        const r = await api('POST', path, { query, topK: 5 }, apiKey, true);
+        if (r.code !== 0) { alert('调用失败: ' + r.message); out.innerHTML = '<p class="muted">调用失败: ' + esc(r.message) + '</p>'; return; }
         render(r.data, mode);
     } catch (e) {
         out.innerHTML = '<p style="color:#f53f3f">异常: ' + esc(e.message) + '</p>';

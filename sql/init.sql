@@ -152,7 +152,9 @@ CREATE INDEX IF NOT EXISTS idx_apikey_kb ON api_key(kb_id);
 CREATE TABLE IF NOT EXISTS audit_log (
     id          BIGSERIAL PRIMARY KEY,
     tenant_id   BIGINT REFERENCES tenant(id),
-    actor_id    BIGINT REFERENCES users(id),
+    -- 操作人：会话调用为用户 id(users.id)，API Key 调用为 api_key id；不强制外键，
+    -- 审计日志可引用已删除/外部主体（启动期 StartupSchemaMigration 亦会移除旧外键）
+    actor_id    BIGINT,
     action      VARCHAR(64) NOT NULL,
     object_type VARCHAR(64),
     object_id   VARCHAR(64),

@@ -6,9 +6,11 @@ function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 /**
  * 通用请求封装。
  * @param tokenOverride 可选，覆盖默认令牌（如用 API Key 调用 /api/v1）
+ * @param noAuthRedirect 可选，为 true 时 401 不跳登录页（用于 /api/v1 用 API Key 鉴权的调用，
+ *        401 代表 API Key 无效，应在页面内展示错误而非清除会话）
  * body 为 FormData 时自动以 multipart 发送，不设置 JSON Content-Type
  */
-async function api(method, path, body, tokenOverride) {
+async function api(method, path, body, tokenOverride, noAuthRedirect) {
     const headers = {};
     const token = tokenOverride || getToken();
     if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -21,7 +23,7 @@ async function api(method, path, body, tokenOverride) {
         body: body ? (body instanceof FormData ? body : JSON.stringify(body)) : undefined
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401) {
+    if (res.status === 401 && !noAuthRedirect) {
         localStorage.removeItem(TOKEN_KEY);
         location.href = '/login.html';
         throw new Error('未登录');
