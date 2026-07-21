@@ -36,7 +36,9 @@
     <div id="tabEval" style="display:none">
         <div class="card">
             <h2>召回率评估（Retrieval Eval）</h2>
-            <p class="eval-hint">基于标注的「查询 ↔ 相关片段」数据集，量化向量检索的召回质量。走管理员会话令牌鉴权，无需 API Key。</p>
+            <p class="eval-hint">基于标注的「查询 ↔ 相关片段」数据集，量化向量检索的召回质量。走管理员会话令牌鉴权，无需 API Key。<br>
+            <b>如何拿到真实 ID：</b>在「问答 / 检索」选项卡选同一知识库，用与文档语义相近的查询做<b>仅检索</b>，结果片段上会显示 <code>chunk #ID</code> 与 <code>doc #ID</code>。把目标片段的 chunkId 填入 <code>relevantChunkIds</code>（按文档整体相关则填 <code>relevantDocIds</code>）。<br>
+            <b>示例里的 12/13/20/7 只是格式占位，必须换成你库里的真实值，否则召回率恒为 0。</b></p>
             <label>选择知识库</label>
             <select id="evalKbSel"></select>
             <label>TopK</label>
@@ -108,7 +110,11 @@ function render(data, mode, query) {
     } else {
         const chunks = data.chunks || [];
         html += '<div class="sources"><div class="s-title">命中 ' + chunks.length + ' 条（topK=' + (data.topK || 5) + '）</div>';
-        chunks.forEach(s => html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span>${esc(s.content)}</div>`);
+        chunks.forEach(s => {
+            const cid = s.chunkId != null ? s.chunkId : '-';
+            const did = s.documentId != null ? s.documentId : '-';
+            html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span>${esc(s.content)}</div>`;
+        });
         html += '</div>';
     }
     html += '</div>';
@@ -169,6 +175,10 @@ function renderEval(d) {
             + '</div>';
     });
     html += '</div>';
+    const allZero = items.every(it => !(typeof it.val === 'number' && isFinite(it.val) && it.val > 0));
+    if (allZero && (d.count != null ? d.count : 0) > 0) {
+        html += '<div class="eval-warn">⚠ 召回率为 0：请确认标注的 chunkId / documentId 是该知识库中真实存在的片段 ID。可在「问答 / 检索」选项卡检索相关查询，从结果片段复制真实 chunk # 与 doc # 后填入。</div>';
+    }
     html += '<p class="eval-hint" style="margin-top:14px">样本数（查询条数）：<b>'
         + (d.count != null ? d.count : 0) + '</b>　·　TopK：' + (d.topK != null ? d.topK : 5)
         + '　·　知识库 ID：' + (d.kbId != null ? d.kbId : '-') + '</p>';
