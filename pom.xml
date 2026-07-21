@@ -72,6 +72,12 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 优先使用 IPv4 网络栈：部分网络 IPv6 路由不通，
+                         而 dashscope.aliyuncs.com 同时返回 IPv6/IPv4 记录，
+                         Java 默认优先 IPv6 会导致调用向量化/对话 API 时 I/O error -->
+                    <jvmArguments>-Djava.net.preferIPv4Stack=true</jvmArguments>
+                </configuration>
             </plugin>
         </plugins>
     </build>
