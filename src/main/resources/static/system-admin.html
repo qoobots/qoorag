@@ -99,6 +99,21 @@ function esc(s) {
     return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+// 资源池字段预设：下拉选项 + 推荐小字提示
+const RP_PRESETS = {
+    embedding_model: {
+        select: ['text-embedding-v3', 'text-embedding-v4', 'text-embedding-v2', 'text-embedding-v1', 'text-embedding-async-v2'],
+        hint: '百炼文本向量模型，需与向量库维度一致；默认推荐 text-embedding-v3（1024维）。'
+    },
+    embedding_batch_size: {
+        hint: '单次向量化批大小，推荐 10~25；值越大吞吐越高但内存占用更大。'
+    },
+    chat_model: {
+        select: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-long', 'deepseek-v3', 'deepseek-r1'],
+        hint: '百炼/兼容 OpenAI 协议的对话模型；默认推荐 qwen-plus。'
+    }
+};
+
 async function loadResourcePool() {
     const r = await api('GET', '/api/admin/resource-pool');
     rpData = r.data || {};
@@ -109,13 +124,49 @@ async function loadResourcePool() {
         section.innerHTML = '<h3>' + esc(category) + '</h3>';
         (rpData[category] || []).forEach(item => {
             const wrap = document.createElement('div');
-            const inputType = item.masked ? 'password' : 'text';
-            wrap.innerHTML = '<label title="' + esc(item.configKey) + '">' + esc(item.description || item.configKey) + '</label>'
-                + '<input id="rp_' + esc(category) + '_' + esc(item.configKey) + '" type="' + inputType + '" value="' + esc(item.configValue) + '">';
+            wrap.className = 'rp-item';
+            wrap.innerHTML = buildRpControl(category, item);
             section.appendChild(wrap);
         });
         container.appendChild(section);
     });
+    // 下拉选择“自定义…”时切换为文本框
+    container.querySelectorAll('select[id^="rp_"]').forEach(sel => {
+        sel.addEventListener('change', function () {
+            if (this.value === '__custom__') {
+                const input = document.createElement('input');
+                input.id = this.id;
+                input.type = 'text';
+                input.placeholder = '输入自定义值';
+                this.replaceWith(input);
+                input.focus();
+            }
+        });
+    });
+}
+
+function buildRpControl(category, item) {
+    const preset = RP_PRESETS[item.configKey];
+    const inputType = item.masked ? 'password' : 'text';
+    const hintHtml = (preset && preset.hint)
+        ? '<small class="hint-inline">' + esc(preset.hint) + '</small>' : '';
+    let controlHtml;
+    if (preset && preset.select) {
+        const opts = preset.select.slice();
+        if (item.configValue && !opts.includes(item.configValue)) opts.push(item.configValue);
+        opts.push('__custom__');
+        const optHtml = opts.map(o => {
+            if (o === '__custom__') return '<option value="__custom__">✎ 自定义…</option>';
+            const sel = (o === item.configValue) ? ' selected' : '';
+            return '<option value="' + esc(o) + '"' + sel + '>' + esc(o) + '</option>';
+        }).join('');
+        controlHtml = '<select id="rp_' + esc(category) + '_' + esc(item.configKey) + '">' + optHtml + '</select>';
+    } else {
+        controlHtml = '<input id="rp_' + esc(category) + '_' + esc(item.configKey) + '" type="' + inputType
+            + '" value="' + esc(item.configValue) + '">';
+    }
+    return '<label title="' + esc(item.configKey) + '">' + esc(item.description || item.configKey) + '</label>'
+        + controlHtml + hintHtml;
 }
 async function saveResourcePool() {
     for (const category of Object.keys(rpData)) {

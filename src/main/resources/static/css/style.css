@@ -54,3 +54,6 @@ th { color: #4e5969; font-weight: 600; }
 .muted { color: #86909c; font-size: 12px; }
 .row-actions button { margin-right: 6px; padding: 4px 10px; font-size: 12px; }
 .code { font-family: monospace; background: #f2f3f5; padding: 6px 8px; border-radius: 4px; word-break: break-all; }
+.rp-item { margin-bottom: 14px; }
+.rp-item label { margin-top: 0; font-weight: 600; color: #1f2329; }
+.hint-inline { display: block; margin-top: 4px; color: #86909c; font-size: 12px; line-height: 1.5; }
