@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.common.BizException;
+import com.qoobot.qoorag.common.DataClassification;
 import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.entity.KbPermission;
@@ -53,12 +54,15 @@ public class KnowledgeBaseService {
     public KnowledgeBase create(String name, String description, String dataClassification) {
         Long tenantId = SecurityContext.get().getTenantId();
         Long ownerId = SecurityContext.get().getUserId();
+        // 数据分级校验（#17）：空值默认 INTERNAL，非法值抛 40001
+        String dc = (dataClassification == null || dataClassification.isBlank()) ? "INTERNAL" : dataClassification;
+        DataClassification.fromCode(dc);
         KnowledgeBase kb = new KnowledgeBase();
         kb.setTenantId(tenantId);
         kb.setOwnerId(ownerId);
         kb.setName(name);
         kb.setDescription(description);
-        kb.setDataClassification(dataClassification);
+        kb.setDataClassification(dc);
         kb.setStatus("ACTIVE");
         kb.setCreatedAt(LocalDateTime.now());
         return kbRepository.save(kb);
