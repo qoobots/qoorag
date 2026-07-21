@@ -47,22 +47,34 @@ public class RetrievalEvalService {
         }
         Set<Long> relChunk = q.relevantChunkIds();
         Set<Long> relDoc = q.relevantDocIds();
+        Set<Long> coveredChunks = new HashSet<>();
+        Set<Long> coveredDocs = new HashSet<>();
         int hits = 0;
         int firstHitRank = -1;
         int limit = Math.min(topK, results.size());
         for (int i = 0; i < limit; i++) {
             RetrieveChunk c = results.get(i);
-            boolean match = relChunk.contains(c.getChunkId()) || relDoc.contains(c.getDocumentId());
-            if (match) {
+            boolean matchChunk = relChunk.contains(c.getChunkId());
+            boolean matchDoc = relDoc.contains(c.getDocumentId());
+            if (matchChunk || matchDoc) {
                 hits++;
                 if (firstHitRank < 0) {
                     firstHitRank = i + 1;
                 }
+                // 记录被覆盖的不同相关项：同一相关文档只要有任一 chunk 进榜即算覆盖一次
+                if (matchChunk) {
+                    coveredChunks.add(c.getChunkId());
+                }
+                if (matchDoc) {
+                    coveredDocs.add(c.getDocumentId());
+                }
             }
         }
-        double recall = (double) hits / relevantTotal;
-        double precision = (double) hits / topK; // 标准 precision@K：相关命中数 / K
-        return new SingleEval(recall, precision, hits > 0, firstHitRank);
+        // 召回率 = 被覆盖的不同相关项数 / 标注相关总数（covered ⊆ relevantTotal，故恒 ≤ 100%）
+        int covered = coveredChunks.size() + coveredDocs.size();
+        double recall = (double) covered / relevantTotal;
+        double precision = (double) hits / topK; // 标准 precision@K：相关命中数 / K（hits≤K，故恒 ≤ 100%）
+        return new SingleEval(recall, precision, covered > 0, firstHitRank);
     }
 
     /** 数据集聚合评估：逐条调用 RetrieveService.retrieve 后汇总 */

@@ -58,6 +58,21 @@ public class RetrievalEvalServiceTest {
     }
 
     @Test
+    void evaluate_single_doc_relevance_multiple_chunks_caps_recall_at_one() {
+        // 标注仅 1 个相关文档(5)，但其 4 个 chunk 全部进榜：召回率应为 100%，而非 400%
+        List<RetrieveChunk> results = List.of(
+                chunk(1, 30, 5, .9), chunk(2, 31, 5, .8),
+                chunk(3, 32, 5, .7), chunk(4, 33, 5, .6));
+        RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
+                "q", Set.of(), Set.of(5L));
+        RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 8);
+        assertEquals(1.0, se.recallAtK(), 1e-9);   // 被覆盖的相关文档数=1 / 标注总数=1
+        assertEquals(0.5, se.precisionAtK(), 1e-9); // 4 命中 / K=8
+        assertEquals(true, se.hit());
+        assertEquals(1, se.firstHitRank());
+    }
+
+    @Test
     void evaluate_single_no_relevant_labels_returns_zeros() {
         RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
                 "q", Set.of(), Set.of());
