@@ -5,17 +5,23 @@
     <title>登录 - qoorag</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
-<div class="login-wrap card">
-    <h2>qoorag 登录</h2>
+<body class="login-page">
+<div class="login-card">
+    <div class="login-brand">
+        <span class="logo">Q</span>
+        <div>
+            <div class="b-name">qoorag</div>
+            <div class="b-sub">企业级 RAG 知识库平台</div>
+        </div>
+    </div>
+    <h2>欢迎回来</h2>
+    <p class="sub">登录以管理你的知识库</p>
     <label>用户名</label>
     <input id="username" value="admin" autocomplete="username">
     <label>密码</label>
     <input id="password" type="password" value="123456" autocomplete="current-password">
-    <div style="margin-top:16px">
-        <button onclick="doLogin()">登录</button>
-    </div>
-    <p class="muted">默认账号 admin / 123456（首次启动由 SeedService 写入）</p>
+    <button class="btn-block" onclick="doLogin()">登录</button>
+    <p class="muted login-foot">默认账号 admin / 123456（首次启动由 SeedService 写入）</p>
 </div>
 <script src="/js/api.js"></script>
 <script>

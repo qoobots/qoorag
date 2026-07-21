@@ -6,20 +6,8 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<header>
-    <span class="brand">qoorag 控制台</span>
-    <nav>
-        <a href="/index.html">首页</a>
-        <a href="/system-admin.html">系统管理</a>
-        <a href="/rag-admin.html">知识库管理</a>
-        <a href="/documents.html">文档管理</a>
-        <a href="/playground.html">问答</a>
-        <a href="/audit.html">审计</a>
-        <a href="javascript:logout()">退出</a>
-    </nav>
-</header>
 <div class="container">
-    <div class="card">
+    <div class="card pg-form">
         <h2>问答 / 检索 Playground</h2>
         <label>选择知识库</label>
         <select id="kbSel"></select>
@@ -37,10 +25,11 @@
     </div>
     <div class="card">
         <h2>结果</h2>
-        <div id="result"><p class="muted">暂无结果</p></div>
+        <div id="result"><div class="empty"><div class="ico">💬</div>在上方输入问题并发送，结果将显示在这里</div></div>
     </div>
 </div>
 <script src="/js/api.js"></script>
+<script src="/js/common.js"></script>
 <script>
 requireToken();
 function esc(s) {
@@ -63,36 +52,41 @@ async function send() {
     const mode = document.querySelector('input[name=mode]:checked').value;
     const path = mode === 'chat' ? '/api/v1/chat' : '/api/v1/retrieve';
     const out = document.getElementById('result');
-    out.innerHTML = '<p class="muted">请求中…</p>';
+    out.innerHTML = '<div class="bubble assistant loading-dots"><div class="who">qoorag 助手</div><div>思考中</div></div>';
     try {
         const r = await api('POST', path, { query, topK: 5 }, apiKey, true);
-        if (r.code !== 0) { alert('调用失败: ' + r.message); out.innerHTML = '<p class="muted">调用失败: ' + esc(r.message) + '</p>'; return; }
-        render(r.data, mode);
+        if (r.code !== 0) {
+            out.innerHTML = '<div class="bubble assistant"><div class="who">qoorag 助手</div>' +
+                '<div style="color:#dc2626">调用失败：' + esc(r.message) + '</div></div>';
+            return;
+        }
+        render(r.data, mode, query);
     } catch (e) {
-        out.innerHTML = '<p style="color:#f53f3f">异常: ' + esc(e.message) + '</p>';
+        out.innerHTML = '<div class="bubble assistant"><div class="who">qoorag 助手</div>' +
+            '<div style="color:#dc2626">异常：' + esc(e.message) + '</div></div>';
     }
 }
-function render(data, mode) {
+function render(data, mode, query) {
     const out = document.getElementById('result');
+    let html = '<div class="bubble user"><div class="who">你</div><div class="ans">' + esc(query) + '</div></div>';
+    html += '<div class="bubble assistant"><div class="who">qoorag 助手</div>';
     if (mode === 'chat') {
-        let html = '<div><strong>回答：</strong><p style="white-space:pre-wrap">' + esc(data.answer) + '</p>';
-        html += '<p class="muted">模型: ' + esc(data.model || '') + '</p>';
+        html += '<div class="ans">' + esc(data.answer) + '</div>';
         if (data.sources && data.sources.length) {
-            html += '<strong>参考片段（' + data.sources.length + '）：</strong><ul>';
-            data.sources.forEach(s => html += `<li style="margin-bottom:8px">[相似度 ${Number(s.score).toFixed(3)}] ${esc(s.content)}</li>`);
-            html += '</ul>';
+            html += '<div class="sources"><div class="s-title">参考片段（' + data.sources.length + '）</div>';
+            data.sources.forEach(s => html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span>${esc(s.content)}</div>`);
+            html += '</div>';
         } else {
-            html += '<p class="muted">无召回片段</p>';
+            html += '<div class="sources"><div class="s-title">无召回片段</div></div>';
         }
-        html += '</div>';
-        out.innerHTML = html;
     } else {
         const chunks = data.chunks || [];
-        let html = '<p class="muted">命中 ' + chunks.length + ' 条（topK=' + (data.topK || 5) + '）</p><ul>';
-        chunks.forEach(s => html += `<li style="margin-bottom:8px">[相似度 ${Number(s.score).toFixed(3)}] ${esc(s.content)}</li>`);
-        html += '</ul>';
-        out.innerHTML = html;
+        html += '<div class="sources"><div class="s-title">命中 ' + chunks.length + ' 条（topK=' + (data.topK || 5) + '）</div>';
+        chunks.forEach(s => html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span>${esc(s.content)}</div>`);
+        html += '</div>';
     }
+    html += '</div>';
+    out.innerHTML = html;
 }
 loadKbs();
 </script>

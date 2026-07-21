@@ -6,18 +6,6 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<header>
-    <span class="brand">qoorag 控制台</span>
-    <nav>
-        <a href="/index.html">首页</a>
-        <a href="/system-admin.html">系统管理</a>
-        <a href="/rag-admin.html">知识库管理</a>
-        <a href="/documents.html">文档管理</a>
-        <a href="/playground.html">问答</a>
-        <a href="/audit.html">审计</a>
-        <a href="javascript:logout()">退出</a>
-    </nav>
-</header>
 <div class="container">
     <div class="card">
         <h2>知识库列表</h2>
@@ -52,6 +40,7 @@
     </div>
 </div>
 <script src="/js/api.js"></script>
+<script src="/js/common.js"></script>
 <script>
 requireToken();
 async function loadKb() {
@@ -59,8 +48,15 @@ async function loadKb() {
     const tb = document.querySelector('#kbTable tbody');
     tb.innerHTML = '';
     (r.data || []).forEach(kb => {
+        const stMap = { ACTIVE: ['success', '启用'], DISABLED: ['neutral', '停用'] };
+        const st = stMap[kb.status] || ['neutral', kb.status];
+        const clsMap = { PUBLIC: 'PUBLIC', INTERNAL: 'INTERNAL', CONFIDENTIAL: 'CONFIDENTIAL', SECRET: 'SECRET' };
+        const cls = clsMap[kb.dataClassification] || 'INTERNAL';
         tb.innerHTML += `<tr>
-            <td>${kb.id}</td><td>${kb.name}</td><td>${kb.dataClassification}</td><td>${kb.status}</td>
+            <td>${kb.id}</td>
+            <td>${esc(kb.name)}</td>
+            <td><span class="tag ${cls}">${esc(kb.dataClassification)}</span></td>
+            <td><span class="badge ${st[0]}">${esc(st[1])}</span></td>
             <td class="row-actions">
                 <button onclick="delKb(${kb.id})">删除</button>
                 <button onclick="listPerm(${kb.id})">权限</button>
