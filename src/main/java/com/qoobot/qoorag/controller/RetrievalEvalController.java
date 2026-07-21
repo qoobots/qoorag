@@ -113,6 +113,8 @@ public class RetrievalEvalController {
                 "hitRate", metrics.hitRate(),
                 "mrr", metrics.mrr(),
                 "count", metrics.count(),
+                "loopSuspectedCount", metrics.loopSuspectedCount(),
+                "trustworthy", metrics.trustworthy(),
                 "details", detailsOut
         ));
     }

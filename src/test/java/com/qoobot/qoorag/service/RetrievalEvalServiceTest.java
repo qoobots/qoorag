@@ -123,4 +123,18 @@ public class RetrievalEvalServiceTest {
         RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 5);
         assertEquals(false, se.loopSuspected());
     }
+
+    @Test
+    void evaluate_single_recall_perfect_flags_loop_redline() {
+        // 标注 {10,11} 全部落入 TopK（recall=100%）→ 触发规范四.3 红线，判疑似循环标注，
+        // 即使 chunk 集合重合 precision 仅 2/5=0.4（低于 0.5，单纯重合度检测不会触发）。
+        List<RetrieveChunk> results = List.of(
+                chunk(1, 10, 1, .9), chunk(2, 11, 1, .8), chunk(3, 20, 2, .7),
+                chunk(4, 30, 3, .6), chunk(5, 40, 4, .5));
+        RetrievalEvalService.LabeledQuery q = new RetrievalEvalService.LabeledQuery(
+                "q", Set.of(10L, 11L), Set.of());
+        RetrievalEvalService.SingleEval se = evalService.evaluateSingle(q, results, 5);
+        assertEquals(1.0, se.recallAtK(), 1e-9);
+        assertEquals(true, se.loopSuspected());
+    }
 }

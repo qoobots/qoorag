@@ -183,12 +183,20 @@ function renderEval(d) {
     if (allZero && (d.count != null ? d.count : 0) > 0) {
         html += '<div class="eval-warn">⚠ 召回率为 0：请确认标注的 chunkId / documentId 是该知识库中真实存在的片段 ID。可在「问答 / 检索」选项卡检索相关查询，从结果片段复制真实 chunk # 与 doc # 后填入。</div>';
     }
+    // 指标有效性自检（规范五）：有效评估集应存在 Recall<100% 与 Precision<100%。
+    if ((d.count != null ? d.count : 0) > 0 && d.trustworthy === false) {
+        const loopN = (d.loopSuspectedCount != null ? d.loopSuspectedCount : 0);
+        html += '<div class="eval-warn eval-invalid">⛔ 指标有效性自检未通过：平均 Recall@K 与 Precision@K 均为 100%'
+            + (loopN > 0 ? '，且 ' + loopN + ' 条查询被标记疑似循环标注' : '')
+            + '。持续全部指标 100% 默认评估结果不可信（规范五），极可能是「先看了召回再标注」的循环标注。'
+            + '请严格按规范：仅依据【查询文本 + 原始 Chunk】独立标注，关闭检索结果视图后重新评估。</div>';
+    }
     // 逐条查询明细
     if (Array.isArray(d.details) && d.details.length) {
         html += '<h3 style="margin:18px 0 4px">逐条查询明细</h3>';
         html += '<p class="eval-hint">每条查询实际召回的片段（rank 为排名，✓ 表示命中你标注的相关项）。'
-            + '系统已自动检测「循环标注」：当某条查询你标注的 chunk 与本次召回的重合度 ≥ 80% 时，'
-            + '判定为疑似循环标注（黄牌），即标注很可能直接取自检索结果本身，该条指标无参考意义。</p>';
+            + '系统已自动检测「循环标注 / 标注污染」：当某条查询你标注的 chunk 与本次召回重合度 ≥ 80%，'
+            + '或标注的相关 chunk 100% 落在 TopK 召回内（召回率=100%，违反规范四.3 红线），即判定疑似循环标注（黄牌），该条指标参考意义低。</p>';
         d.details.forEach((dq, idx) => {
             const q = dq.query != null ? dq.query : ('查询 ' + (idx + 1));
             const qrec = (typeof dq.recallAtK === 'number') ? (dq.recallAtK * 100).toFixed(1) + '%' : '-';
@@ -199,8 +207,10 @@ function renderEval(d) {
                 + '<span class="ed-q">' + esc(q) + '</span>'
                 + '<span class="ed-rec">召回 ' + qrec + (dq.firstHitRank > 0 ? ' · 首命中 #' + dq.firstHitRank : '') + '</span></div>';
             if (suspect) {
-                html += '<div class="ed-loop">⚠ 疑似循环标注：你标注的 chunk 有 ' + ratio + '% 与本次召回完全重叠，'
-                    + '很可能直接取自检索结果本身，该条指标参考意义低。请改用「问答 / 检索」选项卡从原文独立判断相关性后重新标注。</div>';
+                const recallFull = (typeof dq.recallAtK === 'number' && dq.recallAtK >= 1.0 - 1e-9);
+                html += '<div class="ed-loop">⚠ 疑似循环标注：你标注的 chunk 有 ' + ratio + '% 与本次召回重叠'
+                    + (recallFull ? '，且标注相关 chunk 100% 落在 TopK 内（召回率=100%，违反规范四.3 红线）' : '')
+                    + '，很可能直接取自检索结果本身，该条指标参考意义低。请改用「问答 / 检索」选项卡从原文独立判断相关性后重新标注。</div>';
             }
             html += '<table class="ed-table"><thead><tr><th>#</th><th>chunk</th><th>doc</th><th>相似度</th><th>命中</th></tr></thead><tbody>';
             (dq.items || []).forEach(it => {

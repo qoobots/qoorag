@@ -59,7 +59,7 @@ public class RetrievalEvalControllerTest {
     @Test
     void eval_returns_aggregated_metrics() throws Exception {
         when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
-                .thenReturn(new RetrievalEvalService.EvalMetrics(0.5, 0.2, 0.5, 0.5, 2, List.of()));
+                .thenReturn(new RetrievalEvalService.EvalMetrics(0.5, 0.2, 0.5, 0.5, 2, List.of(), 0, true));
 
         String body = "{"
                 + "\"kbId\":2,\"topK\":5,"
@@ -88,7 +88,7 @@ public class RetrievalEvalControllerTest {
         RetrievalEvalService.SingleEval se = new RetrievalEvalService.SingleEval(
                 1.0, 1.0, true, 1, List.of(), true, 0.8);
         when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
-                .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 1, List.of(se)));
+                .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 1, List.of(se), 1, false));
 
         String body = "{"
                 + "\"kbId\":2,\"topK\":5,"
@@ -97,6 +97,27 @@ public class RetrievalEvalControllerTest {
         mockMvc.perform(post("/api/admin/eval").contentType("application/json").content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.details[0].loopSuspected").value(true))
-                .andExpect(jsonPath("$.data.details[0].overlapRatio").value(0.8));
+                .andExpect(jsonPath("$.data.details[0].overlapRatio").value(0.8))
+                .andExpect(jsonPath("$.data.loopSuspectedCount").value(1))
+                .andExpect(jsonPath("$.data.trustworthy").value(false));
+    }
+
+    @Test
+    void eval_untrustworthy_when_all_metrics_full() throws Exception {
+        RetrievalEvalService.SingleEval se = new RetrievalEvalService.SingleEval(
+                1.0, 1.0, true, 1, List.of(), true, 1.0);
+        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
+                .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 3, List.of(se, se, se), 3, false));
+
+        String body = "{"
+                + "\"kbId\":2,\"topK\":5,"
+                + "\"queries\":[{\"query\":\"q1\",\"relevantChunkIds\":[1,2]},"
+                + "{\"query\":\"q2\",\"relevantChunkIds\":[3,4]},"
+                + "{\"query\":\"q3\",\"relevantChunkIds\":[5,6]}]"
+                + "}";
+        mockMvc.perform(post("/api/admin/eval").contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trustworthy").value(false))
+                .andExpect(jsonPath("$.data.loopSuspectedCount").value(3));
     }
 }
