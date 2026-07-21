@@ -64,3 +64,12 @@ qoorag:
     embedding-model: text-embedding-v2
     chat-model: qwen-plus
     embedding-batch-size: 25
+  # 检索增强（#retrieval-tuning）：默认关闭（none），行为不变。
+  # 评估时可通过 POST /api/admin/eval 的 rerankMode/candidatePool/minScore/diversityMaxPerDoc 覆盖对比；
+  # 若改为 hybrid / diversity，将对生产检索（含 Chat RAG）生效。
+  retrieval:
+    candidate-pool: 0        # 0=直接用 topK；>0 先取候选池再重排裁剪
+    min-score: 0.0           # 最低相似度阈值，0=不过滤
+    rerank-mode: none        # none | diversity | hybrid
+    diversity-max-per-doc: 2 # 多样性重排时单文档最多保留片段数
+    rrf-k: 60                # RRF 融合平滑常数

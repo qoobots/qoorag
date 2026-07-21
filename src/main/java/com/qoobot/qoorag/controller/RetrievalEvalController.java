@@ -6,6 +6,8 @@ import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.common.Result;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.service.RetrievalEvalService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,6 +30,8 @@ import java.util.TreeSet;
 @RestController
 @RequestMapping("/api/admin")
 public class RetrievalEvalController {
+
+    private static final Logger log = LoggerFactory.getLogger(RetrievalEvalController.class);
 
     private final RetrievalEvalService evalService;
 
@@ -77,7 +81,30 @@ public class RetrievalEvalController {
             dataset.add(new RetrievalEvalService.LabeledQuery(qtext, chunkIds, docIds));
         }
 
-        RetrievalEvalService.EvalMetrics metrics = evalService.evaluateDataset(dataset, topK, kbId, tenantId);
+        // 检索策略临时覆盖（用于对比不同策略，评估后恢复默认）
+        String overrideMode = body.get("rerankMode") != null ? String.valueOf(body.get("rerankMode")) : null;
+        int overridePool = body.get("candidatePool") != null ? ((Number) body.get("candidatePool")).intValue() : -1;
+        double overrideMin = body.get("minScore") != null ? ((Number) body.get("minScore")).doubleValue() : -1.0;
+        int overrideMax = body.get("diversityMaxPerDoc") != null ? ((Number) body.get("diversityMaxPerDoc")).intValue() : -1;
+        int overrideK = body.get("rrfK") != null ? ((Number) body.get("rrfK")).intValue() : -1;
+        String savedMode = evalService.getRetrieveService().getRerankMode();
+        int savedPool = evalService.getRetrieveService().getCandidatePool();
+        double savedMin = evalService.getRetrieveService().getMinScore();
+        int savedMax = evalService.getRetrieveService().getDiversityMaxPerDoc();
+        int savedK = evalService.getRetrieveService().getRrfK();
+        RetrievalEvalService.EvalMetrics metrics;
+        try {
+            evalService.getRetrieveService().overrideRerankConfig(overrideMode, overridePool, overrideMin, overrideMax, overrideK);
+            if (overrideMode != null || overridePool >= 0 || overrideMin >= 0 || overrideMax >= 0 || overrideK > 0) {
+                log.info("评估临时覆盖检索策略: mode={}, pool={}, minScore={}, maxPerDoc={}, rrfK={}",
+                        overrideMode, overridePool, overrideMin, overrideMax, overrideK);
+            }
+
+            metrics = evalService.evaluateDataset(dataset, topK, kbId, tenantId);
+        } finally {
+            // 恢复默认检索策略，避免影响后续正常检索（如 Chat）
+            evalService.getRetrieveService().overrideRerankConfig(savedMode, savedPool, savedMin, savedMax, savedK);
+        }
 
         List<Map<String, Object>> detailsOut = new ArrayList<>();
         for (int i = 0; i < metrics.details().size(); i++) {

@@ -24,6 +24,11 @@ public class RetrievalEvalService {
         this.retrieveService = retrieveService;
     }
 
+    /** 暴露 RetrieveService，供评估接口临时覆盖/恢复检索策略 */
+    public RetrieveService getRetrieveService() {
+        return retrieveService;
+    }
+
     /** 一条标注：查询文本 + 相关 chunkId 集合 + 相关 documentId 集合（任一可空） */
     public record LabeledQuery(String query, Set<Long> relevantChunkIds, Set<Long> relevantDocIds) {
         public LabeledQuery {

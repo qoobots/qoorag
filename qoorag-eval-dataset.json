@@ -1,118 +1,203 @@
 [
   {
-    "query": "大语言模型（LLM）时代，企业创新能力面临哪些结构性挑战？本研究要回答什么核心问题？",
+    "query": "企业智能化创新的论文，绪论里提出了什么研究背景和核心问题？",
     "relevantChunkIds": [],
-    "relevantDocIds": [10]
+    "relevantDocIds": [10, 27]
+  },
+  {
+    "query": "这篇关于企业智能化创新的论文，文献综述梳理了哪些已有研究？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [11, 42]
   },
   {
     "query": "动态能力理论（Teece）的 Sensing–Seizing–Transforming 三环节分别指什么？",
     "relevantChunkIds": [],
-    "relevantDocIds": [12]
+    "relevantDocIds": [12, 13]
   },
   {
     "query": "什么是人–AI 协同创新模式（HACI）？它有哪些可观测的行为分类？",
     "relevantChunkIds": [],
-    "relevantDocIds": [13]
+    "relevantDocIds": [13, 12]
+  },
+  {
+    "query": "论文在构念界定与量表开发阶段，是如何定义和测量 HACI 的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [13, 21]
   },
   {
     "query": "本研究提出了哪些研究假设（H1–H4）？假设体系是怎样推导出来的？",
     "relevantChunkIds": [],
-    "relevantDocIds": [14]
+    "relevantDocIds": [14, 12]
   },
   {
     "query": "论文采用了怎样的实验设计？是否为 2×2×前后测的田野实验？",
     "relevantChunkIds": [],
-    "relevantDocIds": [15]
+    "relevantDocIds": [15, 24]
   },
   {
-    "query": "实证研究的样本规模是多少？纳入了多少家企业、多少个创新团队参与实验？",
-    "relevantChunkIds": [893, 894],
-    "relevantDocIds": [16]
+    "query": "实证研究的样本规模是多少？纳入了多少家企业、多少个创新团队？数据分析怎么做的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [16, 15]
+  },
+  {
+    "query": "论文第08章过程分析揭示了哪些机制发现？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [17, 18]
   },
   {
     "query": "研究发现 AI 协同是在构建还是削弱企业创新能力？如何回应'替代焦虑'？",
     "relevantChunkIds": [],
-    "relevantDocIds": [18]
+    "relevantDocIds": [18, 19]
   },
   {
     "query": "这篇关于企业智能化创新的论文，主要结论和理论贡献是什么？",
     "relevantChunkIds": [],
-    "relevantDocIds": [19]
+    "relevantDocIds": [19, 18]
+  },
+  {
+    "query": "认知重构量表（CRS）包含哪些维度和题项？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [21, 13]
+  },
+  {
+    "query": "这篇企业智能化论文的中文摘要讲了什么核心观点？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [25, 27]
+  },
+  {
+    "query": "人–AI 协同创新模式的编码手册是怎么设计的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [20, 13]
+  },
+  {
+    "query": "论文的创新产出专家评分标准是什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [22, 16]
+  },
+  {
+    "query": "论文的访谈提纲覆盖了哪些内容？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [23, 11]
+  },
+  {
+    "query": "论文附录里的实验操作手册讲了什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [24, 15]
+  },
+  {
+    "query": "《打造伟大的产品》第01章怎么讲第四次工业革命与企业智能化的关系？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [27, 8]
   },
   {
     "query": "什么是智能体（Agent）？它和企业里的大语言模型是什么关系？",
-    "relevantChunkIds": [1023, 1024],
-    "relevantDocIds": [28]
+    "relevantChunkIds": [],
+    "relevantDocIds": [28, 8]
   },
   {
     "query": "AI 能不能替代人类的想象力和创造力？'砖头有多少种用途'的发散性思维测试说明了什么？",
     "relevantChunkIds": [],
-    "relevantDocIds": [29]
+    "relevantDocIds": [29, 8]
   },
   {
     "query": "法律 AI 公司 Harvey 是如何崛起的？它的估值和融资历程是怎样的？",
     "relevantChunkIds": [],
-    "relevantDocIds": [30, 39]
+    "relevantDocIds": [30, 8]
   },
   {
     "query": "企业应该如何制定智能化战略？为什么大多数企业只有零散动作而没有真正的战略？",
     "relevantChunkIds": [],
-    "relevantDocIds": [31]
+    "relevantDocIds": [31, 8]
+  },
+  {
+    "query": "智能化转型中，智能组织应该是什么样的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [32, 8]
   },
   {
     "query": "使用 Copilot 等 AI 辅助编程，开发效率能提升多少？",
-    "relevantChunkIds": [1107, 1108],
-    "relevantDocIds": [33]
+    "relevantChunkIds": [],
+    "relevantDocIds": [33, 8]
+  },
+  {
+    "query": "智能化在营销与客户运营中能发挥什么作用？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [34, 8]
+  },
+  {
+    "query": "智能化在运营与供应链管理中如何落地？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [35, 8]
   },
   {
     "query": "Amazon 的 AI 招聘工具为什么被叫停？它反映了什么算法偏见问题？",
     "relevantChunkIds": [],
-    "relevantDocIds": [36, 40]
+    "relevantDocIds": [36, 8]
   },
   {
     "query": "企业 AI 基础设施由哪几部分构成？为什么数据底座比模型本身更重要？",
     "relevantChunkIds": [],
-    "relevantDocIds": [37]
+    "relevantDocIds": [37, 8]
   },
   {
     "query": "为什么大多数 AI 项目会失败？约 85% 的 AI 项目未能规模化的原因是什么？",
     "relevantChunkIds": [],
-    "relevantDocIds": [38]
+    "relevantDocIds": [38, 8]
   },
   {
     "query": "什么是 AI-Native 企业？它和传统企业做智能化有什么本质不同？",
     "relevantChunkIds": [],
-    "relevantDocIds": [39]
+    "relevantDocIds": [39, 8]
   },
   {
     "query": "Apple Card 信用卡事件暴露了怎样的算法性别歧视问题？",
     "relevantChunkIds": [],
-    "relevantDocIds": [40]
+    "relevantDocIds": [40, 8]
+  },
+  {
+    "query": "智能化时代，领导力与人的价值体现在哪里？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [41, 8]
+  },
+  {
+    "query": "《打造伟大的产品》第16章总结与展望讲了什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [42, 8]
   },
   {
     "query": "如何自评企业的智能化成熟度？成熟度问卷怎么使用？",
     "relevantChunkIds": [],
-    "relevantDocIds": [43]
+    "relevantDocIds": [43, 8]
   },
   {
     "query": "企业做 AI 工具与平台选型时，有哪些主流大模型和平台可选？",
     "relevantChunkIds": [],
-    "relevantDocIds": [44]
+    "relevantDocIds": [44, 8]
   },
   {
-    "query": "什么是 RAG（检索增强生成）？它有什么作用？",
-    "relevantChunkIds": [1236, 1237],
-    "relevantDocIds": [45]
-  },
-  {
-    "query": "《打造伟大的产品》这本书的作者是谁？他的背景是什么？",
+    "query": "什么是 RAG（检索增强生成）？术语表里怎么解释它？",
     "relevantChunkIds": [],
-    "relevantDocIds": [49]
+    "relevantDocIds": [45, 8]
+  },
+  {
+    "query": "《打造伟大的产品》的后记与致谢主要写了什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [46, 8]
   },
   {
     "query": "这本书的前言主要讲了什么？作者为什么写这本书？",
     "relevantChunkIds": [],
-    "relevantDocIds": [47]
+    "relevantDocIds": [47, 8]
+  },
+  {
+    "query": "这本书的阅读指南给读者什么建议？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [48, 8]
+  },
+  {
+    "query": "《打造伟大的产品》这本书的作者是谁？他的背景是什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [49, 8]
   },
   {
     "query": "Qoorag 的 PDF 解析测试文档里写了什么内容？",
@@ -120,18 +205,118 @@
     "relevantDocIds": [7]
   },
   {
-    "query": "这篇企业智能化论文的中文摘要讲了什么核心观点？",
+    "query": "企业智能化创新研究整体要回答的核心科学问题是什么？",
     "relevantChunkIds": [],
-    "relevantDocIds": [25]
+    "relevantDocIds": [10, 12]
   },
   {
-    "query": "认知重构量表（CRS）包含哪些维度和题项？",
+    "query": "论文的实证方法包含哪些环节（实验设计、样本、操作手册）？",
     "relevantChunkIds": [],
-    "relevantDocIds": [21]
+    "relevantDocIds": [15, 16]
+  },
+  {
+    "query": "为什么说约 85% 的 AI 项目会失败？企业该如何避免智能化转型失败？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [38, 31]
+  },
+  {
+    "query": "AI 对研发效率的影响有多大？Copilot 等工具的实际效果如何？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [33, 8]
+  },
+  {
+    "query": "企业里有哪些典型的算法偏见案例？Amazon 招聘和 Apple Card 各说明了什么？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [36, 40]
+  },
+  {
+    "query": "动态能力理论如何支撑本研究的理论框架？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [12, 13]
+  },
+  {
+    "query": "智能化战略和 AI-Native 企业之间是什么关系？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [31, 39]
+  },
+  {
+    "query": "人–AI 协同创新（HACI）有哪些可观测的行为类型？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [13, 20]
+  },
+  {
+    "query": "智能体在企业智能化转型中可以应用到哪些场景？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [28, 8]
+  },
+  {
+    "query": "论文的研究假设（H1–H4）是如何从理论和文献中推导出来的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [14, 12]
+  },
+  {
+    "query": "为什么数据与 AI 基础设施比模型本身更重要？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [37, 8]
+  },
+  {
+    "query": "认知重构量表（CRS）到底测量的是创新能力中的哪一部分？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [21, 13]
+  },
+  {
+    "query": "企业如何自评智能化成熟度，并据此制定落地路线？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [43, 8]
+  },
+  {
+    "query": "从论文研究到企业实践，企业应如何系统性落地智能化？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [38, 31]
+  },
+  {
+    "query": "论文的研究发现是如何回应'AI 会替代人类'这种替代焦虑的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [18, 29]
+  },
+  {
+    "query": "智能化时代面临哪些伦理与治理挑战？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [40, 36]
+  },
+  {
+    "query": "论文的实证研究纳入了多少样本企业？样本规模是怎么确定的？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [16, 15]
+  },
+  {
+    "query": "这篇论文引用了哪些关键文献？参考文献和文献综述有什么关联？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [9, 11]
   },
   {
     "query": "吴军在《打造伟大的产品》中提出的好产品到伟大产品的系统方法论是怎样的？",
     "relevantChunkIds": [],
-    "relevantDocIds": [8]
+    "relevantDocIds": [8, 31]
+  },
+  {
+    "query": "企业智能化转型中，智能研发和智能营销分别解决了什么痛点？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [33, 34]
+  },
+  {
+    "query": "从动态能力视角看，企业如何用 AI 重构自身的创新能力？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [12, 18]
+  },
+  {
+    "query": "智能化落地方法论中，数据底座、组织能力和战略之间如何协同？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [37, 31]
+  },
+  {
+    "query": "论文的结论对企业实际推进智能化有哪些启示？",
+    "relevantChunkIds": [],
+    "relevantDocIds": [19, 38]
   }
 ]
