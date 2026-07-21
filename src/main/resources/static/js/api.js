@@ -1,4 +1,10 @@
 // 统一的 API 封装：自动附带 Bearer 令牌（登录后存入 localStorage）
+
+/** HTML 转义，防止 XSS 与渲染错乱（全局可用，各页面无需重复定义） */
+function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 const TOKEN_KEY = 'qoorag_token';
 
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
