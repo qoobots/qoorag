@@ -8,6 +8,7 @@ import com.qoobot.qoorag.entity.Role;
 import com.qoobot.qoorag.entity.User;
 import com.qoobot.qoorag.repository.ApiKeyRepository;
 import com.qoobot.qoorag.repository.UserRepository;
+import com.qoobot.qoorag.service.AuditService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -27,6 +28,7 @@ public class AuthService {
     private final ApiKeyRepository apiKeyRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private final RedisTemplate<String, SessionInfo> sessionRedisTemplate;
+    private final AuditService auditService;
 
     /** 会话令牌 Redis key 前缀 */
     private static final String SESSION_KEY_PREFIX = "qoorag:session:";
@@ -37,11 +39,13 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository, ApiKeyRepository apiKeyRepository,
                        BCryptPasswordEncoder passwordEncoder,
-                       RedisTemplate<String, SessionInfo> sessionRedisTemplate) {
+                       RedisTemplate<String, SessionInfo> sessionRedisTemplate,
+                       AuditService auditService) {
         this.userRepository = userRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.passwordEncoder = passwordEncoder;
         this.sessionRedisTemplate = sessionRedisTemplate;
+        this.auditService = auditService;
     }
 
     public SessionInfo login(String username, String password) {
@@ -61,11 +65,18 @@ public class AuthService {
         String token = UUID.randomUUID().toString();
         info.token = token;
         sessionRedisTemplate.opsForValue().set(keyOf(token), info, sessionTtlMinutes, TimeUnit.MINUTES);
+        auditService.log("LOGIN", "User", String.valueOf(user.getId()), null,
+                "login success", info.tenantId, info.userId);
         return info;
     }
 
     public void logout(String token) {
+        SessionInfo info = sessionRedisTemplate.opsForValue().get(keyOf(token));
+        Long tenantId = info != null ? info.tenantId : null;
+        Long actorId = info != null ? info.userId : null;
         sessionRedisTemplate.delete(keyOf(token));
+        auditService.log("LOGOUT", "User", actorId != null ? String.valueOf(actorId) : null,
+                null, "logout", tenantId, actorId);
     }
 
     public SessionInfo validateSession(String token) {

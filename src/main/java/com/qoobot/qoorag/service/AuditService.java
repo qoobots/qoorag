@@ -23,12 +23,18 @@ public class AuditService {
 
     public void log(String action, String objectType, String objectId,
                     String beforeValue, String afterValue) {
-        AuditLog log = new AuditLog();
         SessionInfoHolder holder = SessionInfoHolder.current();
-        if (holder != null) {
-            log.setTenantId(holder.tenantId());
-            log.setActorId(holder.actorId());
-        }
+        Long tenantId = holder != null ? holder.tenantId() : null;
+        Long actorId = holder != null ? holder.actorId() : null;
+        log(action, objectType, objectId, beforeValue, afterValue, tenantId, actorId);
+    }
+
+    /** 显式指定租户/操作人（用于登录等 SecurityContext 尚未建立的场景） */
+    public void log(String action, String objectType, String objectId,
+                    String beforeValue, String afterValue, Long tenantId, Long actorId) {
+        AuditLog log = new AuditLog();
+        log.setTenantId(tenantId);
+        log.setActorId(actorId);
         log.setAction(action);
         log.setObjectType(objectType);
         log.setObjectId(objectId);

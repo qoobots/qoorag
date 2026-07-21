@@ -8,6 +8,7 @@ import com.qoobot.qoorag.entity.Role;
 import com.qoobot.qoorag.entity.User;
 import com.qoobot.qoorag.repository.ApiKeyRepository;
 import com.qoobot.qoorag.repository.UserRepository;
+import com.qoobot.qoorag.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,13 +37,14 @@ public class AuthServiceTest {
     @Mock BCryptPasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, SessionInfo> redisTemplate;
     @Mock ValueOperations<String, SessionInfo> valueOps;
+    @Mock AuditService auditService;
 
     AuthService authService;
 
     @BeforeEach
     void setUp() {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        authService = new AuthService(userRepository, apiKeyRepository, passwordEncoder, redisTemplate);
+        authService = new AuthService(userRepository, apiKeyRepository, passwordEncoder, redisTemplate, auditService);
     }
 
     private User activeUser() {
@@ -71,6 +73,7 @@ public class AuthServiceTest {
         assertNotNull(info.token);
         assertTrue(info.hasRole("ADMIN"));
         verify(valueOps).set(anyString(), any(SessionInfo.class), anyLong(), any());
+        verify(auditService).log(eq("LOGIN"), eq("User"), eq("1"), isNull(), eq("login success"), eq(7L), eq(1L));
     }
 
     @Test
@@ -99,8 +102,15 @@ public class AuthServiceTest {
 
     @Test
     void logout_deletes_session() {
+        SessionInfo info = new SessionInfo();
+        info.userId = 1L;
+        info.tenantId = 7L;
+        when(valueOps.get("qoorag:session:tok")).thenReturn(info);
+
         authService.logout("tok");
+
         verify(redisTemplate).delete("qoorag:session:tok");
+        verify(auditService).log(eq("LOGOUT"), eq("User"), eq("1"), isNull(), eq("logout"), eq(7L), eq(1L));
     }
 
     @Test

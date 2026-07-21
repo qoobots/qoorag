@@ -8,6 +8,7 @@ import com.qoobot.qoorag.dto.ChatResponse;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
+import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.slf4j.Logger;
@@ -29,15 +30,18 @@ public class ApiController {
     private final RetrieveService retrieveService;
     private final ChatService chatService;
     private final MetricsConfig.RagMetrics ragMetrics;
+    private final AuditService auditService;
 
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
                          ChatService chatService,
-                         MetricsConfig.RagMetrics ragMetrics) {
+                         MetricsConfig.RagMetrics ragMetrics,
+                         AuditService auditService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
         this.ragMetrics = ragMetrics;
+        this.auditService = auditService;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -57,6 +61,8 @@ public class ApiController {
         try {
             List<RetrieveChunk> chunks = retrieveService.retrieve(query, topK, ctx.getKbId(), ctx.getTenantId());
             ragMetrics.recordRetrieve(System.currentTimeMillis() - start, !chunks.isEmpty());
+            auditService.log("RETRIEVE", "Query", String.valueOf(ctx.getKbId()), null,
+                    "topK=" + topK + ",hits=" + chunks.size(), ctx.getTenantId(), actorOf(ctx));
             return Result.ok(Map.of(
                     "query", query,
                     "topK", topK,
@@ -118,11 +124,18 @@ public class ApiController {
             trace.setCreatedAt(LocalDateTime.now());
             qaTraceRepository.save(trace);
 
+            auditService.log("CHAT", "Query", String.valueOf(ctx.getKbId()), null,
+                    "topK=" + topK + ",sources=" + chunks.size(), ctx.getTenantId(), actorOf(ctx));
             ragMetrics.recordChat(System.currentTimeMillis() - start);
             return Result.ok(chatResponse);
         } catch (Exception e) {
             log.error("问答失败: {}", e.getMessage(), e);
             return Result.fail(500, "问答失败: " + e.getMessage());
         }
+    }
+
+    /** 审计操作人：会话调用取 userId，API Key 调用取 apiKeyId */
+    private Long actorOf(SessionInfo ctx) {
+        return ctx.isApiKey ? ctx.apiKeyId : ctx.userId;
     }
 }

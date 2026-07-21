@@ -7,6 +7,7 @@ import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
+import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.junit.jupiter.api.AfterEach;
@@ -33,7 +34,8 @@ public class ApiControllerTest {
     ChatService chatService = mock(ChatService.class);
     QaTraceRepository qaTraceRepository = mock(QaTraceRepository.class);
     MetricsConfig.RagMetrics ragMetrics = mock(MetricsConfig.RagMetrics.class);
-    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, ragMetrics);
+    AuditService auditService = mock(AuditService.class);
+    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, ragMetrics, auditService);
     MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -76,6 +78,7 @@ public class ApiControllerTest {
                 .andExpect(jsonPath("$.data.chunks[0].content").value("content"));
 
         verify(ragMetrics).recordRetrieve(anyLong(), eq(true));
+        verify(auditService).log(eq("RETRIEVE"), eq("Query"), eq("2"), isNull(), anyString(), eq(7L), isNull());
     }
 
     @Test
@@ -103,5 +106,6 @@ public class ApiControllerTest {
 
         verify(ragMetrics).recordChat(anyLong());
         verify(qaTraceRepository).save(any(QaTrace.class));
+        verify(auditService).log(eq("CHAT"), eq("Query"), eq("2"), isNull(), anyString(), eq(7L), isNull());
     }
 }
