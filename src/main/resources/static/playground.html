@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>问答 / 检索 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/index.html">首页</a>
+        <a href="/system-admin.html">系统管理</a>
+        <a href="/rag-admin.html">知识库管理</a>
+        <a href="/documents.html">文档管理</a>
+        <a href="/playground.html">问答</a>
+        <a href="/audit.html">审计</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>问答 / 检索 Playground</h2>
+        <label>选择知识库</label>
+        <select id="kbSel"></select>
+        <label>API Key（在「知识库管理」为该库签发并复制明文 Key）</label>
+        <input id="apiKey" type="password" placeholder="qk_...">
+        <div style="margin:12px 0">
+            <label>模式</label>
+            <label style="display:inline;margin-right:16px"><input type="radio" name="mode" value="chat" checked style="width:auto"> 问答（检索+LLM 生成）</label>
+            <label style="display:inline"><input type="radio" name="mode" value="retrieve" style="width:auto"> 仅检索（返回召回片段）</label>
+        </div>
+        <label>问题 / 查询</label>
+        <textarea id="query" rows="3" placeholder="例如：公司的请假流程是什么？"></textarea>
+        <div style="margin-top:12px"><button onclick="send()">发送</button></div>
+        <p class="muted">说明：问答/检索走对外 API（/api/v1），使用 API Key 鉴权，与登录会话令牌不同。</p>
+    </div>
+    <div class="card">
+        <h2>结果</h2>
+        <div id="result"><p class="muted">暂无结果</p></div>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function loadKbs() {
+    const r = await api('GET', '/api/kb');
+    const sel = document.getElementById('kbSel');
+    sel.innerHTML = '';
+    (r.data || []).forEach(kb => {
+        sel.innerHTML += `<option value="${kb.id}">${esc(kb.name)} (ID:${kb.id})</option>`;
+    });
+}
+async function send() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const query = document.getElementById('query').value.trim();
+    if (!apiKey) { alert('请填写 API Key（在「知识库管理」为该知识库签发并复制）'); return; }
+    if (!query) { alert('请输入问题'); return; }
+    const mode = document.querySelector('input[name=mode]:checked').value;
+    const path = mode === 'chat' ? '/api/v1/chat' : '/api/v1/retrieve';
+    const out = document.getElementById('result');
+    out.innerHTML = '<p class="muted">请求中…</p>';
+    try {
+        const r = await api('POST', path, { query, topK: 5 }, apiKey);
+        if (r.code !== 0) { alert('调用失败: ' + r.message); out.innerHTML = '<p class="muted">调用失败</p>'; return; }
+        render(r.data, mode);
+    } catch (e) {
+        out.innerHTML = '<p style="color:#f53f3f">异常: ' + esc(e.message) + '</p>';
+    }
+}
+function render(data, mode) {
+    const out = document.getElementById('result');
+    if (mode === 'chat') {
+        let html = '<div><strong>回答：</strong><p style="white-space:pre-wrap">' + esc(data.answer) + '</p>';
+        html += '<p class="muted">模型: ' + esc(data.model || '') + '</p>';
+        if (data.sources && data.sources.length) {
+            html += '<strong>参考片段（' + data.sources.length + '）：</strong><ul>';
+            data.sources.forEach(s => html += `<li style="margin-bottom:8px">[相似度 ${Number(s.score).toFixed(3)}] ${esc(s.content)}</li>`);
+            html += '</ul>';
+        } else {
+            html += '<p class="muted">无召回片段</p>';
+        }
+        html += '</div>';
+        out.innerHTML = html;
+    } else {
+        const chunks = data.chunks || [];
+        let html = '<p class="muted">命中 ' + chunks.length + ' 条（topK=' + (data.topK || 5) + '）</p><ul>';
+        chunks.forEach(s => html += `<li style="margin-bottom:8px">[相似度 ${Number(s.score).toFixed(3)}] ${esc(s.content)}</li>`);
+        html += '</ul>';
+        out.innerHTML = html;
+    }
+}
+loadKbs();
+</script>
+</body>
+</html>

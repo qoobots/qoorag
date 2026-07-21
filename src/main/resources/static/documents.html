@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>文档管理 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/index.html">首页</a>
+        <a href="/system-admin.html">系统管理</a>
+        <a href="/rag-admin.html">知识库管理</a>
+        <a href="/documents.html">文档管理</a>
+        <a href="/playground.html">问答</a>
+        <a href="/audit.html">审计</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>文档管理</h2>
+        <label>选择知识库</label>
+        <select id="kbSel" onchange="loadDocs()"></select>
+        <div style="margin-top:12px">
+            <label>上传文档（仅支持 .txt / .pdf）</label>
+            <input id="fileInput" type="file" accept=".txt,.pdf">
+            <div style="margin-top:8px"><button onclick="upload()">上传并入库</button></div>
+            <p class="muted">上传后后端异步解析、切片、向量化（依赖 Embedding 资源池）。状态会变为 PROCESSING → INDEXED / FAILED。</p>
+        </div>
+        <table id="docTable">
+            <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>创建时间</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+async function loadKbs() {
+    const r = await api('GET', '/api/kb');
+    const sel = document.getElementById('kbSel');
+    sel.innerHTML = '';
+    (r.data || []).forEach(kb => {
+        sel.innerHTML += `<option value="${kb.id}">${esc(kb.name)} (ID:${kb.id})</option>`;
+    });
+    if ((r.data || []).length) loadDocs();
+}
+async function loadDocs() {
+    const kbId = document.getElementById('kbSel').value;
+    if (!kbId) return;
+    const r = await api('GET', '/api/kb/' + kbId + '/documents');
+    const tb = document.querySelector('#docTable tbody');
+    tb.innerHTML = '';
+    (r.data || []).forEach(d => {
+        const cls = d.status === 'INDEXED' ? '' : (d.status === 'FAILED' ? ' style="color:#f53f3f"' : ' style="color:#d9a441"');
+        tb.innerHTML += `<tr${cls}>
+            <td>${d.id}</td>
+            <td>${esc(d.name)}</td>
+            <td>${esc(d.status)}</td>
+            <td>${esc(d.createdAt)}</td>
+        </tr>`;
+    });
+}
+async function upload() {
+    const kbId = document.getElementById('kbSel').value;
+    const fileInput = document.getElementById('fileInput');
+    if (!kbId) { alert('请先选择知识库'); return; }
+    if (!fileInput.files.length) { alert('请选择要上传的文件'); return; }
+    try {
+        const r = await uploadDocument(kbId, fileInput.files[0]);
+        if (r.code === 0) {
+            alert('上传成功，文档状态: ' + r.data.status);
+            fileInput.value = '';
+            loadDocs();
+        } else {
+            alert('上传失败: ' + r.message);
+        }
+    } catch (e) {
+        alert('上传异常: ' + e.message);
+    }
+}
+loadKbs();
+</script>
+</body>
+</html>

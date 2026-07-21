@@ -1,5 +1,6 @@
 package com.qoobot.qoorag.config;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.qoobot.qoorag.common.SessionInfo;
@@ -8,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /** Redis 配置：会话存储（JSON 序列化 SessionInfo）+ 限流计数 */
@@ -21,11 +22,16 @@ public class RedisConfig {
         template.setConnectionFactory(connectionFactory);
         template.setKeySerializer(new StringRedisSerializer());
 
+        // 明确指定目标类型为 SessionInfo，避免 GenericJackson2JsonRedisSerializer 反序列化为 LinkedHashMap
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
-        template.setValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
+        // 兼容旧 GenericJackson 序列化数据中的多余字段（如 isApiKey 同时序列化为 apiKey）
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        Jackson2JsonRedisSerializer<SessionInfo> jsonSerializer =
+                new Jackson2JsonRedisSerializer<>(objectMapper, SessionInfo.class);
+        template.setValueSerializer(jsonSerializer);
         template.setHashKeySerializer(new StringRedisSerializer());
-        template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
+        template.setHashValueSerializer(jsonSerializer);
         template.afterPropertiesSet();
         return template;
     }

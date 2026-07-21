@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>审计日志 - qoorag</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+    <span class="brand">qoorag 控制台</span>
+    <nav>
+        <a href="/index.html">首页</a>
+        <a href="/system-admin.html">系统管理</a>
+        <a href="/rag-admin.html">知识库管理</a>
+        <a href="/documents.html">文档管理</a>
+        <a href="/playground.html">问答</a>
+        <a href="/audit.html">审计</a>
+        <a href="javascript:logout()">退出</a>
+    </nav>
+</header>
+<div class="container">
+    <div class="card">
+        <h2>审计日志</h2>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:160px"><label>操作类型</label><input id="fAction" placeholder="如 LOGIN / CHAT"></div>
+            <div style="flex:1;min-width:160px"><label>对象类型</label><input id="fType" placeholder="如 User / KnowledgeBase"></div>
+            <div style="flex:1;min-width:160px"><label>起始时间</label><input id="fStart" type="datetime-local"></div>
+            <div style="flex:1;min-width:160px"><label>结束时间</label><input id="fEnd" type="datetime-local"></div>
+        </div>
+        <div style="margin-top:12px">
+            <button onclick="load(0)">查询</button>
+            <button onclick="doExport()">导出 CSV</button>
+        </div>
+        <table id="auditTable">
+            <thead><tr><th>时间</th><th>操作</th><th>对象类型</th><th>对象ID</th><th>操作人</th></tr></thead>
+            <tbody></tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;gap:12px;align-items:center">
+            <button onclick="prevPage()">上一页</button>
+            <span id="pageInfo" class="muted"></span>
+            <button onclick="nextPage()">下一页</button>
+        </div>
+    </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+requireToken();
+let page = 0, size = 20, totalPages = 1;
+function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function buildQs(p) {
+    const qs = new URLSearchParams();
+    qs.set('page', p);
+    qs.set('size', size);
+    const a = document.getElementById('fAction').value.trim();
+    const t = document.getElementById('fType').value.trim();
+    const s = document.getElementById('fStart').value;
+    const e = document.getElementById('fEnd').value;
+    if (a) qs.set('action', a);
+    if (t) qs.set('objectType', t);
+    if (s) qs.set('start', s.replace('T', ' ') + ':00');
+    if (e) qs.set('end', e.replace('T', ' ') + ':00');
+    return qs.toString();
+}
+async function load(p) {
+    page = p;
+    const r = await api('GET', '/api/admin/audit?' + buildQs(p));
+    if (r.code !== 0) { alert(r.message); return; }
+    const d = r.data;
+    totalPages = d.totalPages || 1;
+    const tb = document.querySelector('#auditTable tbody');
+    tb.innerHTML = '';
+    (d.content || []).forEach(a => {
+        tb.innerHTML += `<tr>
+            <td>${esc(a.createdAt)}</td>
+            <td>${esc(a.action)}</td>
+            <td>${esc(a.objectType)}</td>
+            <td>${esc(a.objectId)}</td>
+            <td>${esc(a.actorId)}</td>
+        </tr>`;
+    });
+    document.getElementById('pageInfo').textContent = `第 ${page + 1} / ${totalPages} 页，共 ${d.totalElements} 条`;
+}
+function prevPage() { if (page > 0) load(page - 1); }
+function nextPage() { if (page + 1 < totalPages) load(page + 1); }
+async function doExport() {
+    const a = document.getElementById('fAction').value.trim();
+    const t = document.getElementById('fType').value.trim();
+    const s = document.getElementById('fStart').value;
+    const e = document.getElementById('fEnd').value;
+    try {
+        await downloadAuditExport({
+            action: a, objectType: t,
+            start: s ? s.replace('T', ' ') + ':00' : '',
+            end: e ? e.replace('T', ' ') + ':00' : ''
+        });
+    } catch (err) {
+        alert('导出失败: ' + err.message);
+    }
+}
+load(0);
+</script>
+</body>
+</html>
