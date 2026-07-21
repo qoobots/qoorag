@@ -12,8 +12,8 @@
         <label>选择知识库</label>
         <select id="kbSel" onchange="loadDocs()"></select>
         <div style="margin-top:12px">
-            <label>上传文档（仅支持 .txt / .pdf）</label>
-            <input id="fileInput" type="file" accept=".txt,.pdf">
+            <label>上传文档（支持 .txt / .md / .pdf）</label>
+            <input id="fileInput" type="file" accept=".txt,.md,.pdf">
             <div style="margin-top:8px"><button onclick="upload()">上传并入库</button></div>
             <p class="muted">上传后后端异步解析、切片、向量化（依赖 Embedding 资源池）。状态会变为 PROCESSING → INDEXED / FAILED。</p>
         </div>

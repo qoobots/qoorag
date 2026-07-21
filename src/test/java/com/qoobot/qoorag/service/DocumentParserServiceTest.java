@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** DocumentParserService 单元测试：TXT / PDF 解析与不支持格式异常 */
+/** DocumentParserService 单元测试：TXT / MD / PDF 解析与不支持格式异常 */
 public class DocumentParserServiceTest {
 
     private final DocumentParserService service = new DocumentParserService();
@@ -24,6 +24,15 @@ public class DocumentParserServiceTest {
                 "中文测试内容".getBytes(StandardCharsets.UTF_8));
         String text = service.parse(file);
         assertEquals("中文测试内容", text);
+    }
+
+    @Test
+    void parse_md_utf8() throws Exception {
+        MultipartFile file = new MockMultipartFile("file", "readme.md", "text/markdown",
+                "# 标题\n\n这是 **Markdown** 正文内容。".getBytes(StandardCharsets.UTF_8));
+        String text = service.parse(file);
+        assertTrue(text.contains("标题"));
+        assertTrue(text.contains("Markdown"));
     }
 
     @Test

@@ -57,8 +57,8 @@ public class DocumentController {
         }
 
         String lowerName = filename.toLowerCase();
-        if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".pdf")) {
-            return Result.fail("仅支持 .txt 和 .pdf 格式，当前文件: " + filename);
+        if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".md") && !lowerName.endsWith(".pdf")) {
+            return Result.fail("仅支持 .txt、.md 和 .pdf 格式，当前文件: " + filename);
         }
 
         log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());

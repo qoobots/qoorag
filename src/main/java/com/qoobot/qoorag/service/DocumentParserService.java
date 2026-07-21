@@ -12,7 +12,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 文档解析服务：支持 TXT（UTF-8）和 PDF（PDFBox），统一返回纯文本
+ * 文档解析服务：支持 TXT / MD（UTF-8 纯文本）和 PDF（PDFBox），统一返回纯文本
  */
 @Service
 public class DocumentParserService {
@@ -27,18 +27,20 @@ public class DocumentParserService {
         }
 
         String lowerName = originalFilename.toLowerCase();
-        if (lowerName.endsWith(".txt")) {
-            return parseTxt(file);
+        if (lowerName.endsWith(".txt") || lowerName.endsWith(".md")) {
+            return parseText(file);
         } else if (lowerName.endsWith(".pdf")) {
             return parsePdf(file);
         } else {
-            throw new IllegalArgumentException("不支持的文件格式: " + originalFilename + "（仅支持 .txt / .pdf）");
+            throw new IllegalArgumentException("不支持的文件格式: " + originalFilename + "（仅支持 .txt / .md / .pdf）");
         }
     }
 
-    private String parseTxt(MultipartFile file) throws IOException {
+    private String parseText(MultipartFile file) throws IOException {
         String content = new String(file.getBytes(), StandardCharsets.UTF_8);
-        log.info("TXT 解析完成：{}，{} 字符", file.getOriginalFilename(), content.length());
+        String lowerName = file.getOriginalFilename().toLowerCase();
+        String ext = lowerName.endsWith(".md") ? "MD" : "TXT";
+        log.info("{} 解析完成：{}，{} 字符", ext, file.getOriginalFilename(), content.length());
         return content;
     }
 
