@@ -34,22 +34,26 @@ public class ChatResponse {
         public void setTotalTokens(int totalTokens) { this.totalTokens = totalTokens; }
     }
 
-    /** 精简后的参考来源（仅透出文档 ID、片段序号、相似度、内容摘要） */
+    /** 精简后的参考来源（透出文档 ID、片段主键、片段序号、相似度、内容摘要） */
     public static class SourceInfo {
         private Long documentId;
+        private Long chunkId;      // chunk 表主键，用于召回评估标注 relevantChunkIds
         private Integer chunkSeq;
         private double score;
         private String snippet;  // 前150字符摘要
 
         public SourceInfo() {}
-        public SourceInfo(Long documentId, Integer chunkSeq, double score, String snippet) {
+        public SourceInfo(Long documentId, Long chunkId, Integer chunkSeq, double score, String snippet) {
             this.documentId = documentId;
+            this.chunkId = chunkId;
             this.chunkSeq = chunkSeq;
             this.score = score;
             this.snippet = snippet;
         }
         public Long getDocumentId() { return documentId; }
         public void setDocumentId(Long documentId) { this.documentId = documentId; }
+        public Long getChunkId() { return chunkId; }
+        public void setChunkId(Long chunkId) { this.chunkId = chunkId; }
         public Integer getChunkSeq() { return chunkSeq; }
         public void setChunkSeq(Integer chunkSeq) { this.chunkSeq = chunkSeq; }
         public double getScore() { return score; }
@@ -70,6 +74,7 @@ public class ChatResponse {
         r.sources = chunks.stream()
                 .map(c -> new SourceInfo(
                         c.getDocumentId(),
+                        c.getChunkId(),
                         c.getChunkSeq(),
                         c.getScore(),
                         c.getContent() != null && c.getContent().length() > 150

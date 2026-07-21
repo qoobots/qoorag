@@ -37,7 +37,7 @@
         <div class="card">
             <h2>召回率评估（Retrieval Eval）</h2>
             <p class="eval-hint">基于标注的「查询 ↔ 相关片段」数据集，量化向量检索的召回质量。走管理员会话令牌鉴权，无需 API Key。<br>
-            <b>如何拿到真实 ID：</b>在「问答 / 检索」选项卡选同一知识库，用与文档语义相近的查询做<b>仅检索</b>，结果片段上会显示 <code>chunk #ID</code> 与 <code>doc #ID</code>。把目标片段的 chunkId 填入 <code>relevantChunkIds</code>（按文档整体相关则填 <code>relevantDocIds</code>）。<br>
+            <b>如何拿到真实 ID：</b>在「问答 / 检索」选项卡选同一知识库，用与文档语义相近的查询发送（问答或仅检索均可），每个结果片段都会显示 <code>chunk #主键ID</code> 与 <code>doc #ID</code>。把目标片段的 <b>chunk 主键</b>填入 <code>relevantChunkIds</code>（按文档整体相关则填 <code>relevantDocIds</code>，对应 doc #）。<br>
             <b>示例里的 12/13/20/7 只是格式占位，必须换成你库里的真实值，否则召回率恒为 0。</b></p>
             <label>选择知识库</label>
             <select id="evalKbSel"></select>
@@ -102,7 +102,11 @@ function render(data, mode, query) {
         html += '<div class="ans">' + esc(data.answer) + '</div>';
         if (data.sources && data.sources.length) {
             html += '<div class="sources"><div class="s-title">参考片段（' + data.sources.length + '）</div>';
-            data.sources.forEach(s => html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span>${esc(s.content)}</div>`);
+            data.sources.forEach(s => {
+                const cid = s.chunkId != null ? s.chunkId : '-';
+                const did = s.documentId != null ? s.documentId : '-';
+                html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span>${esc(s.snippet != null ? s.snippet : s.content)}</div>`;
+            });
             html += '</div>';
         } else {
             html += '<div class="sources"><div class="s-title">无召回片段</div></div>';
