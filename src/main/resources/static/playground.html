@@ -7,6 +7,11 @@
 </head>
 <body>
 <div class="container">
+    <div class="pg-tabs">
+        <button class="pg-tab active" id="tabChatBtn" onclick="switchTab('chat')">问答 / 检索</button>
+        <button class="pg-tab" id="tabEvalBtn" onclick="switchTab('eval')">召回率评估</button>
+    </div>
+    <div id="tabChat">
     <div class="card pg-form">
         <h2>问答 / 检索 Playground</h2>
         <label>选择知识库</label>
@@ -27,6 +32,25 @@
         <h2>结果</h2>
         <div id="result"><div class="empty"><div class="ico">💬</div>在上方输入问题并发送，结果将显示在这里</div></div>
     </div>
+    </div><!-- /tabChat -->
+    <div id="tabEval" style="display:none">
+        <div class="card">
+            <h2>召回率评估（Retrieval Eval）</h2>
+            <p class="eval-hint">基于标注的「查询 ↔ 相关片段」数据集，量化向量检索的召回质量。走管理员会话令牌鉴权，无需 API Key。</p>
+            <label>选择知识库</label>
+            <select id="evalKbSel"></select>
+            <label>TopK</label>
+            <input id="evalTopK" type="number" value="5" min="1" max="50">
+            <label>标注数据集（JSON 数组）</label>
+            <textarea id="evalQueries" rows="10" placeholder='[{"query":"...","relevantChunkIds":[12,13],"relevantDocIds":[]}]'></textarea>
+            <button class="eval-sample" type="button" onclick="fillEvalSample()">填充示例</button>
+            <div style="margin-top:14px"><button type="button" onclick="runEval()">运行评估</button></div>
+        </div>
+        <div class="card">
+            <h2>评估结果</h2>
+            <div id="evalResult"><div class="empty"><div class="ico">📊</div>运行评估后，指标将显示在这里</div></div>
+        </div>
+    </div>
 </div>
 <script src="/js/api.js"></script>
 <script src="/js/common.js"></script>
@@ -39,9 +63,11 @@ function esc(s) {
 async function loadKbs() {
     const r = await api('GET', '/api/kb');
     const sel = document.getElementById('kbSel');
-    sel.innerHTML = '';
+    const esel = document.getElementById('evalKbSel');
+    sel.innerHTML = ''; esel.innerHTML = '';
     (r.data || []).forEach(kb => {
-        sel.innerHTML += `<option value="${kb.id}">${esc(kb.name)} (ID:${kb.id})</option>`;
+        const opt = `<option value="${kb.id}">${esc(kb.name)} (ID:${kb.id})</option>`;
+        sel.innerHTML += opt; esel.innerHTML += opt;
     });
 }
 async function send() {
@@ -87,6 +113,66 @@ function render(data, mode, query) {
     }
     html += '</div>';
     out.innerHTML = html;
+}
+function switchTab(name) {
+    const chat = name === 'chat';
+    document.getElementById('tabChat').style.display = chat ? '' : 'none';
+    document.getElementById('tabEval').style.display = chat ? 'none' : '';
+    document.getElementById('tabChatBtn').classList.toggle('active', chat);
+    document.getElementById('tabEvalBtn').classList.toggle('active', !chat);
+}
+function fillEvalSample() {
+    document.getElementById('evalQueries').value = JSON.stringify([
+        { "query": "如何申请数据权限", "relevantChunkIds": [12, 13], "relevantDocIds": [] },
+        { "query": "系统部署步骤是什么", "relevantChunkIds": [], "relevantDocIds": [7] },
+        { "query": "忘记密码怎么办", "relevantChunkIds": [20], "relevantDocIds": [] }
+    ], null, 2);
+}
+async function runEval() {
+    const kbSel = document.getElementById('evalKbSel');
+    const kbId = kbSel.value;
+    if (!kbId) { alert('请先选择知识库'); return; }
+    const topK = parseInt(document.getElementById('evalTopK').value, 10) || 5;
+    let queries;
+    try { queries = JSON.parse(document.getElementById('evalQueries').value); }
+    catch (e) { alert('标注数据集 JSON 解析失败：' + e.message); return; }
+    if (!Array.isArray(queries) || !queries.length) { alert('queries 必须为非空数组'); return; }
+    const out = document.getElementById('evalResult');
+    out.innerHTML = '<div class="empty"><div class="ico">⏳</div>评估中…</div>';
+    try {
+        const r = await api('POST', '/api/admin/eval', { kbId: Number(kbId), topK, queries });
+        if (r.code !== 0) {
+            out.innerHTML = '<div style="color:#dc2626">评估失败：' + esc(r.message) + '</div>';
+            return;
+        }
+        renderEval(r.data);
+    } catch (e) {
+        out.innerHTML = '<div style="color:#dc2626">异常：' + esc(e.message) + '</div>';
+    }
+}
+function renderEval(d) {
+    const items = [
+        { label: '召回率 Recall@K', val: d.recallAtK, sub: 'topK 内命中相关数 / 标注相关总数' },
+        { label: '准确率 Precision@K', val: d.precisionAtK, sub: '命中数 / K' },
+        { label: '命中率 HitRate', val: d.hitRate, sub: '至少命中 1 个的查询占比' },
+        { label: '平均倒数排名 MRR', val: d.mrr, sub: '1 / 首次命中排名，取平均' }
+    ];
+    let html = '<div class="metric-grid">';
+    items.forEach(it => {
+        const v = (typeof it.val === 'number' && isFinite(it.val)) ? it.val : 0;
+        const w = Math.max(0, Math.min(100, v * 100));
+        html += '<div class="metric">'
+            + '<div class="m-label">' + it.label + '</div>'
+            + '<div class="m-val">' + (v * 100).toFixed(1) + '<small>%</small></div>'
+            + '<div class="m-bar"><div class="m-fill" style="width:' + w + '%"></div></div>'
+            + '<div class="m-sub">' + it.sub + '</div>'
+            + '</div>';
+    });
+    html += '</div>';
+    html += '<p class="eval-hint" style="margin-top:14px">样本数（查询条数）：<b>'
+        + (d.count != null ? d.count : 0) + '</b>　·　TopK：' + (d.topK != null ? d.topK : 5)
+        + '　·　知识库 ID：' + (d.kbId != null ? d.kbId : '-') + '</p>';
+    document.getElementById('evalResult').innerHTML = html;
 }
 loadKbs();
 </script>

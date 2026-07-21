@@ -419,6 +419,50 @@ tbody tr:last-child td { border-bottom: none; }
 .quick-card .qc-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .quick-card .qc-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 
+/* Playground 评估选项卡 */
+.pg-tabs {
+    display: flex; gap: 4px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+}
+.pg-tab {
+    appearance: none; background: none; border: 0; cursor: pointer;
+    padding: 11px 18px; font-size: 14px; font-weight: 500; color: var(--text-muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .15s, border-color .15s;
+}
+.pg-tab:hover { color: var(--text); }
+.pg-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.eval-hint { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.6; }
+.eval-sample {
+    margin-top: 8px; font-size: 12px; color: var(--primary);
+    background: none; border: 0; padding: 0; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+}
+
+.metric-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px; margin-top: 6px;
+}
+.metric {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; background: #fff;
+}
+.metric .m-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.metric .m-val { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
+.metric .m-val small { font-size: 14px; font-weight: 500; color: var(--text-muted); margin-left: 2px; }
+.metric .m-bar {
+    margin-top: 12px; height: 8px; border-radius: 99px;
+    background: #f1f5f9; overflow: hidden;
+}
+.metric .m-fill {
+    height: 100%; border-radius: 99px;
+    background: linear-gradient(90deg, var(--primary), #818cf8);
+    transition: width .5s ease;
+}
+.metric .m-sub { margin-top: 9px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+#evalResult .empty .ico { font-size: 28px; }
+
 /* =====================================================================
    响应式
    ===================================================================== */
