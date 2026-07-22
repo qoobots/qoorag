@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <title>问答 / 检索 - qoorag</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/vendor/marked.min.js"></script>
+    <script src="/vendor/purify.min.js"></script>
 </head>
 <body>
 <div class="container">
@@ -62,6 +64,17 @@ function esc(s) {
     return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+// Markdown 解析：marked 渲染 + DOMPurify 防 XSS；库未加载时降级为纯文本
+function mdToHtml(s) {
+    if (s == null) return '';
+    if (window.marked && typeof marked.parse === 'function') {
+        const raw = marked.parse(String(s));
+        const clean = (window.DOMPurify && typeof DOMPurify.sanitize === 'function')
+            ? DOMPurify.sanitize(raw) : raw;
+        return clean;
+    }
+    return '<p>' + esc(s) + '</p>';
+}
 async function loadKbs() {
     const r = await api('GET', '/api/kb');
     const sel = document.getElementById('kbSel');
@@ -99,13 +112,13 @@ function render(data, mode, query) {
     let html = '<div class="bubble user"><div class="who">你</div><div class="ans">' + esc(query) + '</div></div>';
     html += '<div class="bubble assistant"><div class="who">qoorag 助手</div>';
     if (mode === 'chat') {
-        html += '<div class="ans">' + esc(data.answer) + '</div>';
+        html += '<div class="ans md">' + mdToHtml(data.answer) + '</div>';
         if (data.sources && data.sources.length) {
             html += '<div class="sources"><div class="s-title">参考片段（' + data.sources.length + '）</div>';
             data.sources.forEach(s => {
                 const cid = s.chunkId != null ? s.chunkId : '-';
                 const did = s.documentId != null ? s.documentId : '-';
-                html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span>${esc(s.snippet != null ? s.snippet : s.content)}</div>`;
+                html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span><div class="md">${mdToHtml(s.snippet != null ? s.snippet : s.content)}</div></div>`;
             });
             html += '</div>';
         } else {
@@ -117,7 +130,7 @@ function render(data, mode, query) {
         chunks.forEach(s => {
             const cid = s.chunkId != null ? s.chunkId : '-';
             const did = s.documentId != null ? s.documentId : '-';
-            html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span>${esc(s.content)}</div>`;
+            html += `<div class="source-item"><span class="s-score">相似度 ${Number(s.score).toFixed(3)}</span><span class="s-id">chunk #${cid} · doc #${did}</span><div class="md">${mdToHtml(s.content)}</div></div>`;
         });
         html += '</div>';
     }
