@@ -60,6 +60,7 @@ public class RetrievalEvalController {
         }
         Long kbId = ((Number) kbObj).longValue();
         int topK = body.get("topK") != null ? ((Number) body.get("topK")).intValue() : 5;
+        boolean rerank = body.get("rerank") != null && Boolean.parseBoolean(String.valueOf(body.get("rerank")));
         Object queriesObj = body.get("queries");
         if (!(queriesObj instanceof List) || ((List<?>) queriesObj).isEmpty()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "queries 必填且非空");
@@ -100,7 +101,7 @@ public class RetrievalEvalController {
                         overrideMode, overridePool, overrideMin, overrideMax, overrideK);
             }
 
-            metrics = evalService.evaluateDataset(dataset, topK, kbId, tenantId);
+            metrics = evalService.evaluateDataset(dataset, topK, kbId, tenantId, rerank);
         } finally {
             // 恢复默认检索策略，避免影响后续正常检索（如 Chat）
             evalService.getRetrieveService().overrideRerankConfig(savedMode, savedPool, savedMin, savedMax, savedK);
@@ -132,18 +133,19 @@ public class RetrievalEvalController {
             detailsOut.add(d);
         }
 
-        return Result.ok(Map.of(
-                "kbId", kbId,
-                "topK", topK,
-                "recallAtK", metrics.recallAtK(),
-                "precisionAtK", metrics.precisionAtK(),
-                "hitRate", metrics.hitRate(),
-                "mrr", metrics.mrr(),
-                "count", metrics.count(),
-                "loopSuspectedCount", metrics.loopSuspectedCount(),
-                "trustworthy", metrics.trustworthy(),
-                "details", detailsOut
-        ));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("kbId", kbId);
+        result.put("topK", topK);
+        result.put("rerank", rerank);
+        result.put("recallAtK", metrics.recallAtK());
+        result.put("precisionAtK", metrics.precisionAtK());
+        result.put("hitRate", metrics.hitRate());
+        result.put("mrr", metrics.mrr());
+        result.put("count", metrics.count());
+        result.put("loopSuspectedCount", metrics.loopSuspectedCount());
+        result.put("trustworthy", metrics.trustworthy());
+        result.put("details", detailsOut);
+        return Result.ok(result);
     }
 
     @SuppressWarnings("unchecked")

@@ -19,9 +19,11 @@ import java.util.Set;
 public class RetrievalEvalService {
 
     private final RetrieveService retrieveService;
+    private final RerankService rerankService;
 
-    public RetrievalEvalService(RetrieveService retrieveService) {
+    public RetrievalEvalService(RetrieveService retrieveService, RerankService rerankService) {
         this.retrieveService = retrieveService;
+        this.rerankService = rerankService;
     }
 
     /** 暴露 RetrieveService，供评估接口临时覆盖/恢复检索策略 */
@@ -117,8 +119,9 @@ public class RetrievalEvalService {
         return new SingleEval(recall, precision, covered > 0, firstHitRank, items, loopSuspected, overlapRatio);
     }
 
-    /** 数据集聚合评估：逐条调用 RetrieveService.retrieve 后汇总 */
-    public EvalMetrics evaluateDataset(List<LabeledQuery> dataset, int topK, Long kbId, Long tenantId) {
+    /** 数据集聚合评估：逐条调用 RetrieveService.retrieve 后汇总。
+     *  @param rerank 是否对召回结果做精排（方案 2）后再评估；开启时按精排截断后的条数计算 Precision */
+    public EvalMetrics evaluateDataset(List<LabeledQuery> dataset, int topK, Long kbId, Long tenantId, boolean rerank) {
         if (dataset == null || dataset.isEmpty()) {
             return new EvalMetrics(0.0, 0.0, 0.0, 0.0, 0, List.of(), 0, true);
         }
@@ -126,7 +129,12 @@ public class RetrievalEvalService {
         List<SingleEval> details = new ArrayList<>(dataset.size());
         for (LabeledQuery q : dataset) {
             List<RetrieveChunk> results = retrieveService.retrieve(q.query(), topK, kbId, tenantId);
-            SingleEval se = evaluateSingle(q, results, topK);
+            int k = topK;
+            if (rerank) {
+                results = rerankService.rerank(q.query(), results);
+                k = results.size(); // 精排截断后实际条数（即 rerank.top-n）
+            }
+            SingleEval se = evaluateSingle(q, results, k);
             details.add(se);
             sumRecall += se.recallAtK();
             sumPrecision += se.precisionAtK();

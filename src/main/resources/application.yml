@@ -69,9 +69,13 @@ qoorag:
   # 评估时仍可通过 POST /api/admin/eval 的 rerankMode/candidatePool/minScore/diversityMaxPerDoc 覆盖对比；
   # hybrid / diversity 均对生产检索（含 Chat RAG）生效。
   retrieval:
-    candidate-pool: 100      # 放大候选池：让向量排名靠后的相关文档也能进入重排（Recall 关键杠杆）
+    candidate-pool: 200      # 放大候选池：让向量排名靠后的相关文档也能进入重排（Recall 关键杠杆）
     min-score: 0.0           # 最低相似度阈值，0=不过滤
     rerank-mode: hybrid      # none | diversity | hybrid
     diversity-max-per-doc: 2 # 多样性重排时单文档最多保留片段数
     rrf-k: 60                # RRF 融合平滑常数
-    top-k: 12                # 生产检索/问答默认返回条数；Recall@12≈85%（topK=2 上限仅~63%）
+    top-k: 20                # 生产检索/问答默认召回条数；cand=200+topK=20 下 Recall≈93%（见 eval_sweep3）
+    rerank:
+      enabled: false         # 方案2：开启后对已召回 top-k 候选做 cross-encoder 精排（百炼 rerank），再截断到 rerank-top-n 喂大模型
+      top-n: 5               # 精排后保留条数（保住召回的同时压低噪声、节省 token）
+      model: gte-rerank       # 百炼 rerank 模型（如 gte-rerank / text-rerank），密钥复用 qoorag.bailian.api-key

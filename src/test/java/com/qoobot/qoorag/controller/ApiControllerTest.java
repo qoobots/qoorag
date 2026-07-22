@@ -9,6 +9,7 @@ import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatService;
+import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,10 +33,11 @@ public class ApiControllerTest {
 
     RetrieveService retrieveService = mock(RetrieveService.class);
     ChatService chatService = mock(ChatService.class);
+    RerankService rerankService = mock(RerankService.class);
     QaTraceRepository qaTraceRepository = mock(QaTraceRepository.class);
     MetricsConfig.RagMetrics ragMetrics = mock(MetricsConfig.RagMetrics.class);
     AuditService auditService = mock(AuditService.class);
-    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, ragMetrics, auditService);
+    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, rerankService, ragMetrics, auditService);
     MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -49,6 +51,8 @@ public class ApiControllerTest {
         ctx.tenantId = 7L;
         ctx.isApiKey = true;
         SecurityContext.set(ctx);
+        // 精排默认关闭，返回原始候选（不触发真实 API 调用）
+        when(rerankService.rerank(anyString(), any())).thenAnswer(inv -> inv.getArgument(1));
     }
 
     @AfterEach

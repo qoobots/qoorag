@@ -4,6 +4,7 @@ import com.qoobot.qoorag.common.GlobalExceptionHandler;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.common.SessionInfo;
 import com.qoobot.qoorag.service.RetrievalEvalService;
+import com.qoobot.qoorag.service.RetrieveService;
 import org.junit.jupiter.api.AfterEach;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -38,6 +40,9 @@ public class RetrievalEvalControllerTest {
         SessionInfo info = new SessionInfo();
         info.tenantId = 7L;
         SecurityContext.set(info);
+        // 桩 getRetrieveService()，避免控制器内部读取检索策略时因 mock 返回 null 而 NPE
+        RetrieveService retrieveService = mock(RetrieveService.class);
+        when(evalService.getRetrieveService()).thenReturn(retrieveService);
     }
 
     @AfterEach
@@ -58,7 +63,7 @@ public class RetrievalEvalControllerTest {
 
     @Test
     void eval_returns_aggregated_metrics() throws Exception {
-        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
+        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L), anyBoolean()))
                 .thenReturn(new RetrievalEvalService.EvalMetrics(0.5, 0.2, 0.5, 0.5, 2, List.of(), 0, true));
 
         String body = "{"
@@ -87,7 +92,7 @@ public class RetrievalEvalControllerTest {
     void eval_details_include_loop_suspected() throws Exception {
         RetrievalEvalService.SingleEval se = new RetrievalEvalService.SingleEval(
                 1.0, 1.0, true, 1, List.of(), true, 0.8);
-        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
+        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L), anyBoolean()))
                 .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 1, List.of(se), 1, false));
 
         String body = "{"
@@ -106,7 +111,7 @@ public class RetrievalEvalControllerTest {
     void eval_untrustworthy_when_all_metrics_full() throws Exception {
         RetrievalEvalService.SingleEval se = new RetrievalEvalService.SingleEval(
                 1.0, 1.0, true, 1, List.of(), true, 1.0);
-        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L)))
+        when(evalService.evaluateDataset(any(), anyInt(), eq(2L), eq(7L), anyBoolean()))
                 .thenReturn(new RetrievalEvalService.EvalMetrics(1.0, 1.0, 1.0, 1.0, 3, List.of(se, se, se), 3, false));
 
         String body = "{"

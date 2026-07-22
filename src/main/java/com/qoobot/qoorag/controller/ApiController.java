@@ -10,6 +10,7 @@ import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatService;
+import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ public class ApiController {
     private final QaTraceRepository qaTraceRepository;
     private final RetrieveService retrieveService;
     private final ChatService chatService;
+    private final RerankService rerankService;
     private final MetricsConfig.RagMetrics ragMetrics;
     private final AuditService auditService;
 
@@ -40,11 +42,13 @@ public class ApiController {
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
                          ChatService chatService,
+                         RerankService rerankService,
                          MetricsConfig.RagMetrics ragMetrics,
                          AuditService auditService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
+        this.rerankService = rerankService;
         this.ragMetrics = ragMetrics;
         this.auditService = auditService;
     }
@@ -94,8 +98,12 @@ public class ApiController {
 
         long start = System.currentTimeMillis();
         try {
-            // 1. 检索召回
+            // 1. 检索召回（宽召回：hybrid + 大候选池，保证高 Recall）
             List<RetrieveChunk> chunks = retrieveService.retrieve(query, topK, ctx.getKbId(), ctx.getTenantId());
+
+            // 1.5. 精排（方案 2）：开启时对召回候选做 cross-encoder 重排并截断到 rerank.top-n，
+            //      仅取高相关片段喂大模型，压低噪声与 token 成本；失败则优雅降级为原始候选
+            chunks = rerankService.rerank(query, chunks);
 
             // 2. 提取 chunk 文本作为上下文
             List<String> contextChunks = chunks.stream()

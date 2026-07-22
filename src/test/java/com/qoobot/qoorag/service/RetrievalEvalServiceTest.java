@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.dto.RetrieveChunk;
+import com.qoobot.qoorag.service.RerankService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,7 +15,8 @@ import static org.mockito.Mockito.when;
 public class RetrievalEvalServiceTest {
 
     RetrieveService retrieveService = mock(RetrieveService.class);
-    RetrievalEvalService evalService = new RetrievalEvalService(retrieveService);
+    RerankService rerankService = mock(RerankService.class);
+    RetrievalEvalService evalService = new RetrievalEvalService(retrieveService, rerankService);
 
     private RetrieveChunk chunk(long id, long chunkId, long docId, double score) {
         return new RetrieveChunk(id, chunkId, docId, 1, "content-" + chunkId, score);
@@ -35,7 +37,7 @@ public class RetrievalEvalServiceTest {
         RetrievalEvalService.LabeledQuery q2 = new RetrievalEvalService.LabeledQuery(
                 "q2", Set.of(99L), Set.of());
 
-        RetrievalEvalService.EvalMetrics m = evalService.evaluateDataset(List.of(q1, q2), 5, 2L, 7L);
+        RetrievalEvalService.EvalMetrics m = evalService.evaluateDataset(List.of(q1, q2), 5, 2L, 7L, false);
 
         assertEquals(2, m.count());
         assertEquals(0.5, m.recallAtK(), 1e-9);   // (1.0 + 0) / 2
@@ -84,7 +86,7 @@ public class RetrievalEvalServiceTest {
 
     @Test
     void evaluate_dataset_empty_returns_zero_metrics() {
-        RetrievalEvalService.EvalMetrics m = evalService.evaluateDataset(List.of(), 5, 2L, 7L);
+        RetrievalEvalService.EvalMetrics m = evalService.evaluateDataset(List.of(), 5, 2L, 7L, false);
         assertEquals(0, m.count());
         assertEquals(0.0, m.recallAtK(), 1e-9);
         assertEquals(0.0, m.hitRate(), 1e-9);
