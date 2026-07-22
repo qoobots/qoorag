@@ -64,12 +64,14 @@ qoorag:
     embedding-model: text-embedding-v2
     chat-model: qwen-plus
     embedding-batch-size: 25
-  # 检索增强（#retrieval-tuning）：默认关闭（none），行为不变。
-  # 评估时可通过 POST /api/admin/eval 的 rerankMode/candidatePool/minScore/diversityMaxPerDoc 覆盖对比；
-  # 若改为 hybrid / diversity，将对生产检索（含 Chat RAG）生效。
+  # 检索增强（#retrieval-tuning）：默认 hybrid（向量余弦 + 中文 bigram 词法 RRF 融合重排），
+  # 评估显示 Recall@2 49.2%→57.0%、HitRate 89%→97%、MRR 不降反升（代价 Precision 70.3%→57.8%）。
+  # 评估时仍可通过 POST /api/admin/eval 的 rerankMode/candidatePool/minScore/diversityMaxPerDoc 覆盖对比；
+  # hybrid / diversity 均对生产检索（含 Chat RAG）生效。
   retrieval:
-    candidate-pool: 0        # 0=直接用 topK；>0 先取候选池再重排裁剪
+    candidate-pool: 100      # 放大候选池：让向量排名靠后的相关文档也能进入重排（Recall 关键杠杆）
     min-score: 0.0           # 最低相似度阈值，0=不过滤
-    rerank-mode: none        # none | diversity | hybrid
+    rerank-mode: hybrid      # none | diversity | hybrid
     diversity-max-per-doc: 2 # 多样性重排时单文档最多保留片段数
     rrf-k: 60                # RRF 融合平滑常数
+    top-k: 12                # 生产检索/问答默认返回条数；Recall@12≈85%（topK=2 上限仅~63%）

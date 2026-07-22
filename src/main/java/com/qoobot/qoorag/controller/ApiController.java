@@ -13,6 +13,7 @@ import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -31,6 +32,10 @@ public class ApiController {
     private final ChatService chatService;
     private final MetricsConfig.RagMetrics ragMetrics;
     private final AuditService auditService;
+
+    /** 生产检索/问答默认返回条数（application.yml: qoorag.retrieval.top-k） */
+    @Value("${qoorag.retrieval.top-k:5}")
+    private int defaultTopK;
 
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
@@ -52,7 +57,7 @@ public class ApiController {
         if (query == null || query.isBlank()) {
             return Result.fail(400, "query 不能为空");
         }
-        Integer topK = body.get("topK") == null ? 5 : ((Number) body.get("topK")).intValue();
+        Integer topK = body.get("topK") == null ? defaultTopK : ((Number) body.get("topK")).intValue();
         if (topK < 1 || topK > 100) {
             topK = Math.max(1, Math.min(topK, 100)); // 夹逼到 1~100
         }
@@ -82,7 +87,7 @@ public class ApiController {
         if (query == null || query.isBlank()) {
             return Result.fail(400, "query 不能为空");
         }
-        Integer topK = body.get("topK") == null ? 5 : ((Number) body.get("topK")).intValue();
+        Integer topK = body.get("topK") == null ? defaultTopK : ((Number) body.get("topK")).intValue();
         if (topK < 1 || topK > 100) {
             topK = Math.max(1, Math.min(topK, 100));
         }
