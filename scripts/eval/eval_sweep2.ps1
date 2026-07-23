@@ -1,12 +1,10 @@
-# 检索配置扫描：在已生效的 hybrid 默认下，扫描 candidate-pool 与 topK 对 Recall 的影响
-# 用法：powershell -NoProfile -ExecutionPolicy Bypass -File eval_sweep.ps1
+# 第二轮扫描：定位 Recall>=85% 所需的最小 topK（candidatePool=40 给重排更全候选）
 $ErrorActionPreference = 'Continue'
 $base = 'http://127.0.0.1:8080'
-$dsPath = 'd:\05workspaces\qoorag\qoorag-eval-dataset.json'
-$log = 'd:\05workspaces\qoorag\eval_sweep.log'
+$dsPath = Join-Path $PSScriptRoot 'qoorag-eval-dataset.json'
+$log = Join-Path $PSScriptRoot 'eval_sweep2.log'
 $dsText = Get-Content $dsPath -Raw -Encoding UTF8
 
-# 登录
 $token = $null
 for ($i=0; $i -lt 3; $i++) {
     try {
@@ -18,18 +16,16 @@ for ($i=0; $i -lt 3; $i++) {
 }
 if (-not $token) { "LOGIN_FAILED" | Out-File $log -Encoding utf8; exit 1 }
 
-# 配置组合：[topK, candidatePool, label]
 $configs = @(
-    @(2, 10,  'HYB cand10 topK2'),
-    @(2, 20,  'HYB cand20 topK2'),
-    @(2, 40,  'HYB cand40 topK2'),
-    @(3, 20,  'HYB cand20 topK3'),
-    @(5, 20,  'HYB cand20 topK5'),
-    @(5, 40,  'HYB cand40 topK5')
+    @(8,  40, 'HYB cand40 topK8'),
+    @(10, 40, 'HYB cand40 topK10'),
+    @(12, 40, 'HYB cand40 topK12'),
+    @(15, 40, 'HYB cand40 topK15'),
+    @(20, 40, 'HYB cand40 topK20')
 )
 
 $lines = @()
-$lines += "=== SWEEP START $(Get-Date -Format 'HH:mm:ss') ==="
+$lines += "=== SWEEP2 START $(Get-Date -Format 'HH:mm:ss') ==="
 foreach ($cfg in $configs) {
     $topK = $cfg[0]; $cp = $cfg[1]; $label = $cfg[2]
     $body = "{`"kbId`":1,`"topK`":$topK,`"rerankMode`":`"hybrid`",`"candidatePool`":$cp,`"queries`":$dsText}"
@@ -49,5 +45,5 @@ foreach ($cfg in $configs) {
     $line | Out-File $log -Append -Encoding utf8
     Start-Sleep -Seconds 1
 }
-$lines += "=== SWEEP END $(Get-Date -Format 'HH:mm:ss') ==="
+$lines += "=== SWEEP2 END $(Get-Date -Format 'HH:mm:ss') ==="
 $lines | ForEach-Object { Write-Host $_ }

@@ -1,8 +1,8 @@
 # 第四轮：candidate-pool=100 下扫描 topK，找达成 Recall>=85% 的最小 topK；并测 topK=2 天花板
 $ErrorActionPreference = 'Continue'
 $base = 'http://127.0.0.1:8080'
-$dsPath = 'd:\05workspaces\qoorag\qoorag-eval-dataset.json'
-$log = 'd:\05workspaces\qoorag\eval_sweep4.log'
+$dsPath = Join-Path $PSScriptRoot 'qoorag-eval-dataset.json'
+$log = Join-Path $PSScriptRoot 'eval_sweep4.log'
 $dsText = Get-Content $dsPath -Raw -Encoding UTF8
 
 $token = $null

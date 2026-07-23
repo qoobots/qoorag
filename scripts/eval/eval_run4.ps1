@@ -1,6 +1,6 @@
 $base='http://localhost:8080'
-$out='d:\05workspaces\qoorag\eval_compare.log'
-$raw=Get-Content 'd:\05workspaces\qoorag\qoorag-eval-dataset.json' -Raw -Encoding UTF8
+$out=Join-Path $PSScriptRoot 'eval_compare.log'
+$raw=Get-Content (Join-Path $PSScriptRoot 'qoorag-eval-dataset.json') -Raw -Encoding UTF8
 $token=(Invoke-RestMethod -Uri "$base/api/auth/login" -Method Post -ContentType 'application/json' -Body '{"username":"admin","password":"123456"}' -UseBasicParsing).data.token
 function Log($s){ $s | Out-File -Append -Encoding utf8 $out }
 function Run($label,$extra){
