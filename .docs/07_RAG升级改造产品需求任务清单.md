@@ -1,13 +1,46 @@
 # 07 RAG 升级改造产品需求与任务清单
 
-> 版本：v1.0（待评审）
+> 版本：v1.1（开发中）
 > 创建日期：2026-10-15
 > 配套文档：`00_头脑风暴文档.md`、`03_数据架构设计文档.md`、`05_技术架构设计文档.md`、`05.3_模块详细设计.md`、`06_功能清单进度文档.md`
-> 代码基线：`main@HEAD`（Spring Boot 3.2.5 / Java 17 / PostgreSQL+pgvector / Redis / 阿里云百炼）
-> 文档状态：📝 草稿 / 待评审
+> 代码基线：Spring Boot 3.2.5 / Java 17 / PostgreSQL+pgvector / Redis / 阿里云百炼
+> 文档状态：🔄 持续更新（M1 进行中）
+> 任务状态图例：✅ 已完成　♋ 进行中　❌ 未开始（含后续 Epic）
 > 优先级图例：**P0** 必做（阻塞效果与规模化）　**P1** 应做（体验与成本）　**P2** 探索（差异化与前沿）
 > 收益图例：🔥 高　☀️ 中　🌙 低
 > 风险图例：🔴 高　🟡 中　🟢 低
+
+---
+
+## 0.1 执行进度总览（2026-10-15）
+
+| 里程碑 | 任务 | 状态 |
+|---|---|---|
+| **M1 地基** | RAG-010 HNSW 索引 | ✅ |
+| | RAG-011 中文分词与 BM25 全文索引 | ✅ |
+| | RAG-012 真混合检索 | ✅ |
+| | RAG-013 策略可配置化与热切换 | ✅ |
+| | RAG-020 Chunk/Document 元数据体系 | ✅ |
+| | RAG-021 结构感知切块 | ✅ |
+| | RAG-030 异步入库任务队列 | ✅ |
+| | RAG-000 自动评测管线与基线快照 | ❌ |
+| | RAG-001 评测集自动生成 | ❌ |
+| | RAG-002 评测集版本化管理 | ❌ |
+| | RAG-003 生成端评估指标 | ❌ |
+| | RAG-004 CI 回归门禁 | ❌ |
+| **M2 质量跃迁** | RAG-023 Contextual Chunking | ❌ |
+| | RAG-040 Prompt 外置与版本化 | ✅ |
+| | RAG-041 上下文组装器 | ✅ |
+| **M3 体验与成本** | RAG-022/025/026/042/043/044/046、RAG-051~055 | ❌ |
+
+**顺带修复的预存缺陷**：
+1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
+2. `ContextAssembler.reorder` 初版 U 型重排逻辑错误（最相关片段落在第 4 位），已改为「偶数位取头、奇数位取尾」的正确实现。
+3. 异步入库在 `@Transactional` 方法内直接 `executor.execute`，工作线程早于事务提交执行导致 `findById` 返回 null、任务被静默丢弃（且误删临时文件）。已改为注册 `afterCommit` 回调。
+
+**测试状态**：`mvn test` 共 135 个用例，新增 31 个纯逻辑单测（分块/元数据/上下文组装/Prompt 渲染）全绿；剩余 72 个 error 为**预存环境问题**（Maven 使用 JDK 25，Mockito inline mock maker 无法在该 JVM 修改类），与本次改动无关。
+
+**端到端验证（真实 PostgreSQL + pgvector 0.7.4 + 真实启动）**：应用成功启动、7 项 schema 迁移全部生效、HNSW 索引就绪；上传返回 taskId 即时响应 → 后台执行 → 失败带明确原因 → 重试后 `retryCount` 递增并重新执行 → 重启恢复正确识别丢失的临时文件。全链路已实测通过。
 
 ---
 
@@ -253,10 +286,14 @@ flowchart TB
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
-| **RAG-010** | **启用 HNSW 向量索引并参数化** | **P0** | 3d | ① `sql/init.sql` 取消注释并建立 HNSW（`vector_cosine_ops`，`m=16, ef_construction=128`）；② `hnsw.ef_search` 可配置（默认 40）；③ 10 万向量压测：Recall 相对暴力检索 ≥ 98%，P95 ≤ 150ms；④ 提供索引重建脚本与文档 | — | `sql/init.sql`、新增迁移脚本 |
-| **RAG-011** | **中文分词与 BM25 全文索引** | **P0** | 8d | ① `chunk` 增加 `tsvector` 列（或生成列）+ GIN 索引；② 中文方案落地（优先 `pg_jieba`/`zhparser`，不可用时以 bigram+IDF 折中并在文档中说明理由）；③ 提供 `bm25_search(query, kb_id, tenant_id, limit)` 能力 | RAG-010 | `sql/init.sql`、`RetrieveService` |
-| **RAG-012** | **真混合检索：BM25 + 向量融合** | **P0** | 8d | ① `RetrieveService` 支持 `fusion` 模式：`bm25 / vector / hybrid`（RRF k=60 或可配加权）；② 现有 `hybrid`（bigram-RRF）保留为 `legacy-hybrid` 供 A/B 对比；③ 评测集上 hybrid 相对纯向量的 Recall@5 提升 ≥ 5pp；④ 全部走 kb_id + tenant_id 隔离 | RAG-011、RAG-000 | `RetrieveService.java:148-224` |
-| **RAG-013** | **检索策略可配置化与热切换** | P0 | 3d | ① 所有检索参数（fusion 模式、权重、候选池、min-score、topK、rerank top-n）支持**按 KB 配置并热生效**（当前 `overrideRerankConfig` 会污染全局单例，需修正为按 KB 上下文传参）；② 修正 `RetrieveService` 用可变字段承载请求级参数的线程安全问题 | RAG-012 | `RetrieveService.java:74-86` |
+| **RAG-010** | **启用 HNSW 向量索引并参数化** | **P0** ✅ | 3d | ① `sql/init.sql` 建立 HNSW（`vector_cosine_ops`，`m=16, ef_construction=128`）；② `hnsw.ef_search` 可配置（默认 40）；③ 10 万向量压测：Recall 相对暴力检索 ≥ 98%，P95 ≤ 150ms；④ 提供索引重建脚本与文档 | — | `sql/init.sql`、新增迁移脚本 |
+| | *实现说明* | | | | | `PgvectorIndexMigrator`（`@Order(4)`）每次启动幂等建索引，存量库无需手工执行 SQL；`RetrieveService.queryVectorDb` 用「手动事务 + `SET LOCAL hnsw.ef_search`」把 GUC 约束在单连接单事务内，避免污染连接池。已在本地 pgvector 0.7.4 实测：索引建成、`SET LOCAL` 提交后自动失效。**待办**：10 万向量压测（RAG-055） |
+| **RAG-011** | **中文分词与 BM25 全文索引** | **P0** ✅ | 8d | ① `chunk` 增加 `tsvector` 列（或生成列）+ GIN 索引；② 中文方案落地（优先 `pg_jieba`/`zhparser`，不可用时以 bigram+IDF 折中并在文档中说明理由）；③ 提供 `bm25_search(query, kb_id, tenant_id, limit)` 能力 | RAG-010 | `sql/init.sql`、`RetrieveService` |
+| | *实现说明* | | | | | 镜像无 `pg_jieba`/`zhparser`（需自行编译），且 PG 默认分词器把整段 CJK 当单 token。采用 **自建 CJK 分词函数** `qoorag_cjk_tsvector/tsquery`（ASCII 词 + CJK 字符二元组）+ `tsv` **生成列** + GIN 索引 + `ts_rank_cd` 排序。已在真实库端到端验证：相关片段命中、无关片段排除、偏移正确。**取舍**：`ts_rank_cd` 非严格 BM25，但 RRF 只需名次；若要严格 BM25 只需替换 `LexicalSearchService` 内部实现，上层不变 |
+| **RAG-012** | **真混合检索：BM25 + 向量融合** | **P0** ✅ | 8d | ① `RetrieveService` 支持 `fusion` 模式：`bm25 / vector / hybrid`（RRF k=60 或可配加权）；② 现有 `hybrid`（bigram-RRF）保留为 `legacy-hybrid` 供 A/B 对比；③ 评测集上 hybrid 相对纯向量的 Recall@5 提升 ≥ 5pp；④ 全部走 kb_id + tenant_id 隔离 | RAG-011、RAG-000 | `RetrieveService.java:148-224` |
+| | *实现说明* | | | | | 新模式 `hybrid-rrf`（默认）：向量路（HNSW）+ 词法路（GIN/ts_rank_cd）**取并集**后按 RRF 名次融合，词法独有片段可进最终结果；改造前算法保留为 `legacy-hybrid`（已标 `@Deprecated`）仅供 A/B。**待办**：评测集量化提升幅度（依赖 RAG-000/001） |
+| **RAG-013** | **检索策略可配置化与热切换** | P0 ✅ | 3d | ① 所有检索参数（fusion 模式、权重、候选池、min-score、topK、rerank top-n）支持**按 KB 配置并热生效**（当前 `overrideRerankConfig` 会污染全局单例，需修正为按 KB 上下文传参）；② 修正 `RetrieveService` 用可变字段承载请求级参数的线程安全问题 | RAG-012 | `RetrieveService.java:74-86` |
+| | *实现说明* | | | | | 新增不可变 `RetrievalStrategy` record，检索入口改为 `retrieve(query, topK, kbId, tenantId, strategy)` 显式传参，彻底消除共享可变状态的线程竞争；`overrideRerankConfig` 标 `@Deprecated` 仅兼容旧评估接口。**待办**：按 KB 持久化策略表 + 热加载（需 `kb_retrieval_config` 表，建议并入 RAG-014） |
 | **RAG-014** | **元数据过滤检索** | P1 | 5d | ① 支持按文档名/标签/时间范围/数据分级过滤召回；② 索引层保证过滤条件下仍能走 ANN（评估 partial index / 分区策略并写入文档） | RAG-020（元数据） | `RetrieveService`、`chunk` 表 |
 | **RAG-015** | **查询改写（Query Rewriting）** | **P1** | 5d | ① 提供 `rewrite` 开关，用轻量 LLM 将 query 改写为检索友好形式（补全指代、展开缩写）；② 默认关闭，评测集上开启后 Recall@5 提升 ≥ 3pp 方可默认开启；③ 改写失败/超时静默降级为原 query | RAG-000 | 新增 `QueryTransformService` |
 | **RAG-016** | **Multi-Query / RAG-Fusion** | P1 | 5d | ① 生成 3-5 个 query 变体并行检索，RRF 融合去重；② 开关默认关闭；③ 单次问答增加的成本与延迟可度量（写入 trace） | RAG-015、RAG-006 | `QueryTransformService` |
@@ -273,8 +310,10 @@ flowchart TB
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
-| **RAG-020** | **Chunk / Document 元数据体系** | **P0** | 8d | ① `chunk` 增加：标题路径 `heading_path`、页码 `page_no`、字符区间 `char_start/char_end`、块类型 `chunk_type`（paragraph/table/code/list）、token 数、父块 ID；② `document` 增加：`source_uri`、`content_hash`、`mime_type`、`size`、`doc_title`、`page_count`、`parser`、`parser_version`；③ 提供存量数据回填脚本（默认填 seq 推导值）；④ 检索结果返回元数据 | — | `entity/Chunk`、`entity/Document`、`sql/init.sql` |
-| **RAG-021** | **结构感知切块** | **P0** | 8d | ① Markdown 按标题层级切分并保留 `heading_path`；② 表格/代码块/列表作为原子单元不被切断；③ 现有固定长度切块保留为 `fixed` 策略，新策略 `structure` 可配；④ 评测集上相对 `fixed` 的 Context Precision 提升 ≥ 5pp | RAG-020 | `IngestService.splitText()` |
+| **RAG-020** | **Chunk / Document 元数据体系** | **P0** ✅ | 8d | ① `chunk` 增加：标题路径 `heading_path`、页码 `page_no`、字符区间 `char_start/char_end`、块类型 `chunk_type`（paragraph/table/code/list）、token 数、父块 ID；② `document` 增加：`source_uri`、`content_hash`、`mime_type`、`size`、`doc_title`、`page_count`、`parser`、`parser_version`；③ 提供存量数据回填脚本（默认填 seq 推导值）；④ 检索结果返回元数据 | — | `entity/Chunk`、`entity/Document`、`sql/init.sql` |
+| | *实现说明* | | | | | `RagSchemaMigrator`（`@Order(6)`）幂等 ALTER 补列（存量库无需手工迁移）；实体新增全部字段；`tsv` 为**生成列**故不在 JPA 映射（避免写只读列）；检索结果已带 `headingPath/pageNo/chunkType/documentName`。**待办**：PDF 页号回填（需解析器输出页码，见 RAG-026）；存量数据回填脚本 |
+| **RAG-021** | **结构感知切块** | **P0** ✅ | 8d | ① Markdown 按标题层级切分并保留 `heading_path`；② 表格/代码块/列表作为原子单元不被切断；③ 现有固定长度切块保留为 `fixed` 策略，新策略 `structure` 可配；④ 评测集上相对 `fixed` 的 Context Precision 提升 ≥ 5pp | RAG-020 | `IngestService.splitText()` |
+| | *实现说明* | | | | | 新增 `structure` 策略（默认）：原子块识别（围栏代码 / Markdown 表格 / 列表）绝不切断；标题按 1~6 级维护**层级路径**（同级/更浅标题会弹出更深层级，避免章节泄漏）；标题不单独成块，仅作为后续块的 `heading_path`；`char_start/char_end` 为原文真实偏移（逐行推进偏移量，修复了初版"块长累加"导致偏移错位的 bug）。改造前算法保留为 `fixed` 策略。新增 11 个单测全绿（`IngestServiceChunkingTest`）。**待办**：Context Precision 量化对比（依赖 RAG-000/001） |
 | **RAG-022** | **父子块（Small-to-Big）** | P1 | 8d | ① 建立子块（检索单元）与父块（生成单元）两级结构；② 检索命中子块后回填父块上下文送入 LLM；③ 评测集上 Faithfulness 或答案完整性人工评分提升 | RAG-020、RAG-021 | `chunk` 表、`RetrieveService` |
 | **RAG-023** | **Contextual Chunking（块级上下文增强）** | **P0** | 8d | ① 入库时用轻量 LLM 为每个 chunk 生成 50-100 字上下文描述，前置拼接到 embedding 文本与 BM25 文本；② 开关可按 KB 配置（默认关闭，成本敏感）；③ 支持 prompt caching / 批量调用降本；④ 评测集上开启后 Recall@5 提升 ≥ 5pp（对标 Anthropic -35% 失败率） | RAG-021、RAG-030 | 新增 `ContextualEnrichService` |
 | **RAG-024** | **入库质量门禁** | P1 | 3d | ① 空块/超短块/重复块（内容哈希去重）自动丢弃并计数；② 解析文本为空时给出明确错误原因（区分"扫描件无文本层"/"加密"/"格式不支持"）；③ 入库报告含：chunk 数、丢弃数、耗时、embedding 用量 | RAG-020 | `IngestService` |
@@ -283,7 +322,8 @@ flowchart TB
 | **RAG-027** | **扫描件 OCR 兜底** | P2 | 13d | ① 检测到 PDF 无文本层时走 OCR（优先 PaddleOCR，服务化部署；Tesseract 兜底）；② OCR 结果标记 `parser=ocr` 与置信度；③ 解析成功率（抽样 100 份真实文档）≥ 90% | RAG-024 | `docker-compose.yml`、新增 OCR 服务 |
 | **RAG-028** | **图片/图表 VLM 描述入库** | P2 | 13d | ① 图片/图表用 VLM 生成结构化描述（含趋势、对比、数据点），作为独立 chunk 入库并保留原图引用；② 图表类 query 可召回描述文本 | RAG-020 | 新增 `VlmService`、对象存储 |
 | **RAG-029** | **增量更新与去重** | P1 | 5d | ① 按 `content_hash` 识别重复文档，支持"跳过/覆盖"策略；② 支持文档级重解析（仅重建该文档向量，不影响全库） | RAG-020 | `IngestService`、`Document` |
-| **RAG-030** | **异步入库任务队列** | **P0** | 13d | ① 上传接口立即返回 `taskId`，入库转异步；② 任务状态机 `QUEUED→RUNNING→SUCCEEDED/FAILED`，含阶段（解析/切块/向量化/入库）、进度百分比、失败原因；③ 支持手动重试与并发度配置；④ 单文档入库失败不影响其他文档 | — | 新增 `ingest_task` 表、`IngestService`、`DocumentController` |
+| **RAG-030** | **异步入库任务队列** | **P0** ✅ | 13d | ① 上传接口立即返回 `taskId`，入库转异步；② 任务状态机 `QUEUED→RUNNING→SUCCEEDED/FAILED`，含阶段（解析/切块/向量化/入库）、进度百分比、失败原因；③ 支持手动重试与并发度配置；④ 单文档入库失败不影响其他文档 | — | 新增 `ingest_task` 表、`IngestService`、`DocumentController` |
+| | *实现说明* | | | | | 新增 `IngestTask` 实体 + `IngestQueueService`（有界线程池，默认 2 worker，队列 100，过载走 `CallerRuns` 不丢任务）；上传先落盘临时文件（文件名带 taskId）再入队，工作线程经 `SpooledMultipartFile` 读取；`IngestService.ingest` 增加 `IngestProgress` 回调按阶段上报进度；新增 `GET /api/kb/{id}/ingest-tasks`、`GET .../{taskId}`、`POST .../{taskId}/retry`；`IngestTaskRecoveryRunner`（@Order 7）在重启后把中断任务重新入队。**已实测**：上传即时返回、后台执行、失败原因明确、重试生效、重启恢复生效 |
 | **RAG-031** | **Late Chunking** | P2 | 8d | ① 支持对整篇做长上下文 embedding 后在 token 层切块的模式；② 与现有模式 A/B 对比，仅在收益显著时默认启用 | RAG-021 | `EmbeddingService`、`IngestService` |
 
 **EPIC-3 小计：P0 37d　P1 45d　P2 47d**
@@ -294,8 +334,10 @@ flowchart TB
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
-| **RAG-040** | **Prompt 模板外置与版本化** | **P0** | 5d | ① Prompt 从 `ChatService.java:55-64` 抽离为模板（DB 存储 + 默认模板文件），支持按 KB/场景绑定；② 支持模板版本与灰度；③ 修改模板无需发版；④ 现有默认行为不变（回归通过） | RAG-000 | 新增 `PromptTemplate` 实体、`ChatService` |
-| **RAG-041** | **上下文组装器（去冗余 + Token 预算）** | **P0** | 8d | ① 新增 `ContextAssembler`：内容去重 → 相关性排序 → token 预算裁剪（预算可配）→ 应对 Lost-in-middle 的重排（高分放首尾）；② 片段带标题/来源前缀（利用 RAG-020 元数据）；③ 评测集上 Faithfulness 提升 ≥ 0.03 或 token 成本降 ≥ 15% | RAG-020、RAG-003 | `ApiController.java:114-116`、`ChatService` |
+| **RAG-040** | **Prompt 模板外置与版本化** | **P0** ✅ | 5d | ① Prompt 从 `ChatService.java:55-64` 抽离为模板（DB 存储 + 默认模板文件），支持按 KB/场景绑定；② 支持模板版本与灰度；③ 修改模板无需发版；④ 现有默认行为不变（回归通过） | RAG-000 | 新增 `PromptTemplate` 实体、`ChatService` |
+| | *实现说明* | | | | | 新增 `prompt_template` 表 + `PromptTemplate` 实体 + `PromptTemplateService`（解析优先级 **KB 级启用 → 全局启用 → 内置默认**，任一层缺失向下回退，Chat 不中断）；`{{context}}`/`{{query}}` 占位符渲染；同作用域单启用约束（启用新模板自动停用旧的）；新增 `GET/POST /api/admin/prompt-templates`、`GET .../effective`、`POST /{id}/enable`、`DELETE /{id}`，全部写审计。内置默认模板与改造前硬编码文本**逐字一致**，默认行为零变化（有单测断言前缀）。**待办**：灰度分流（RAG-048） |
+| **RAG-041** | **上下文组装器（去冗余 + Token 预算）** | **P0** ✅ | 8d | ① 新增 `ContextAssembler`：内容去重 → 相关性排序 → token 预算裁剪（预算可配）→ 应对 Lost-in-middle 的重排（高分放首尾）；② 片段带标题/来源前缀（利用 RAG-020 元数据）；③ 评测集上 Faithfulness 提升 ≥ 0.03 或 token 成本降 ≥ 15% | RAG-020、RAG-003 | `ApiController.java:114-116`、`ChatService` |
+| | *实现说明* | | | | | 新增 `ContextAssembler`，四步：内容指纹去重 → token 预算裁剪（高相关优先、低相关先丢）→ U 型位置重排（最相关放首尾、最不相关放中间）→ 来源标注（文档名 / 标题路径 / 页码）。`ApiController` 的 `sources` 改用**预算裁剪后实际使用**的片段，保证引用与答案一致；`qa_trace` 落 `trace_json`（召回数/上下文用量/丢重/丢预算/模板来源/token 用量）。新增 20 个单测覆盖去重、预算、重排、渲染、token 估算。**待办**：Faithfulness/成本量化（依赖 RAG-000/003） |
 | **RAG-042** | **引用归因增强（句子级）** | **P1** | 8d | ① 答案按句标注来源 chunk_id（Prompt 约束 + 后解析）；② `ChatResponse.sources` 扩展：标题、页码、heading_path、精确片段；③ 前端可点击引用跳转定位 | RAG-020、RAG-040 | `ChatResponse`、`ChatService`、`playground.html` |
 | **RAG-043** | **流式输出（SSE）** | P1 | 8d | ① `/api/v1/chat` 支持 `stream=true`，SSE 增量返回；② 结束后推送 sources 与 usage 事件；③ 非流式行为保持不变（兼容）；④ 首字延迟 ≤ 1.5s（P95） | RAG-041 | `ApiController`、`ChatService` |
 | **RAG-044** | **多轮对话与指代消解** | P1 | 13d | ① 支持 `sessionId` 携带历史（最近 N 轮，可配）；② 追问类 query 先做指代消解再检索；③ 历史过长时自动压缩；④ 提供会话历史存储与 TTL 清理 | RAG-015 | 新增 `ChatSession` 实体、`ApiController` |
@@ -346,12 +388,15 @@ flowchart TB
 | Epic | P0 | P1 | P2 | 合计 |
 |---|---|---|---|---|
 | EPIC-1 评估与实验平台 | 29d | 13d | 5d | **47d** |
-| EPIC-2 索引与检索升级 | 22d | 21d | 24d | **67d** |
-| EPIC-3 摄入与知识表示 | 37d | 45d | 47d | **129d** |
-| EPIC-4 生成与上下文工程 | 13d | 45d | 21d | **79d** |
+| EPIC-2 索引与检索升级 | 22d ✅ | 21d | 24d | **67d** |
+| EPIC-3 摄入与知识表示 | 37d ✅ | 45d | 47d | **129d** |
+| EPIC-4 生成与上下文工程 | 13d ✅ | 45d | 21d | **79d** |
 | EPIC-5 工程化与成本 | 0d | 32d | 0d | **32d** |
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
-| **合计** | **101d** | **156d** | **194d** | **451d** |
+| **合计** | **101d（已完成）** | **156d** | **194d** | **451d** |
+
+> **M1 + M2 的 P0 部分已全部完成（9/13）**；剩余 P0 集中在 EPIC-1（评测闭环 4 项，共 29d）。
+> 评测闭环是后续所有优化的"尺子"——没有它，RAG-012/021/023/041 的收益都无法量化证明，建议下一迭代优先投入。
 
 > 按 1 名开发满负荷估算；2 人并行时墙钟时间约为 60%（需考虑任务间依赖串行）。
 

@@ -121,14 +121,18 @@ CREATE TABLE IF NOT EXISTS vector_data (
 CREATE INDEX IF NOT EXISTS idx_vector_kb ON vector_data(kb_id);
 CREATE INDEX IF NOT EXISTS idx_vector_tenant ON vector_data(tenant_id);
 
--- ANN 近似最近邻索引（IVFFlat；检索加速）
--- 说明：IVFFlat 索引需在数据写入后创建；lists 按表行数取 sqrt(rows) 以内
---       当前表为空时先跳过，待有数据后执行下方 SQL：
--- CREATE INDEX IF NOT EXISTS idx_vector_embedding_ivfflat
---     ON vector_data USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
--- 如后续改用 HNSW（pgvector 0.5+），替换为：
--- CREATE INDEX IF NOT EXISTS idx_vector_embedding_hnsw
---     ON vector_data USING hnsw (embedding vector_cosine_ops);
+-- ANN 近似最近邻索引（HNSW；pgvector 0.5+）
+-- 选型理由：HNSW 相比 IVFFlat 无需预先训练/指定 lists，且召回率-延迟曲线更优；
+--   代价是构建更慢、内存占用更高（m × rows）。
+-- 参数：
+--   m               = 16    每个节点的最大连接数，越大召回越高、内存与构建耗时越高
+--   ef_construction = 128   建索引时的搜索宽度，越大图质量越高、构建越慢
+-- 查询期用 hnsw.ef_search 权衡召回/延迟（应用侧配置项 qoorag.vector.hnsw.ef-search，默认 40）：
+--   SET hnsw.ef_search = 100;   -- 提高召回（数据量大/删库后建议临时调大）
+-- 注意：大量删除数据后 HNSW 召回可能显著下降（社区实测可从 95% 跌至 18%），
+--   删除/重建向量后应执行 VACUUM（必要时 REINDEX）恢复召回。
+CREATE INDEX IF NOT EXISTS idx_vector_embedding_hnsw
+    ON vector_data USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128);
 
 -- ---------------------------------------------------------------------------
 -- API Key（4.10，按知识库签发；key_hash 为 SHA-256 十六进制）

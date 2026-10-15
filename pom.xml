@@ -19,6 +19,13 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- 源码编码：项目源码为 UTF-8。不显式声明时 javac 使用平台默认编码
+             （中文 Windows 为 GBK/MS936），会把 UTF-8 中的中文字面量解析成乱码，
+             导致中文日志、异常信息、测试断言与业务字符串全部错乱。 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- 测试 JVM 也按 UTF-8 处理，避免中文断言信息在控制台输出为乱码 -->
+        <surefire.argLine>-Dfile.encoding=UTF-8</surefire.argLine>
     </properties>
 
     <dependencies>
@@ -74,13 +81,22 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>${surefire.argLine}</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <!-- 优先使用 IPv4 网络栈：部分网络 IPv6 路由不通，
                          而 dashscope.aliyuncs.com 同时返回 IPv6/IPv4 记录，
-                         Java 默认优先 IPv6 会导致调用向量化/对话 API 时 I/O error -->
-                    <jvmArguments>-Djava.net.preferIPv4Stack=true</jvmArguments>
+                         Java 默认优先 IPv6 会导致调用向量化/对话 API 时 I/O error。
+                         file.encoding=UTF-8：保证中文日志/异常在控制台不乱码
+                         （与 project.build.sourceEncoding 对应，编译期+运行期都按 UTF-8）。 -->
+                    <jvmArguments>-Djava.net.preferIPv4Stack=true -Dfile.encoding=UTF-8</jvmArguments>
                 </configuration>
             </plugin>
         </plugins>

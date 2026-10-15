@@ -7,35 +7,45 @@ import com.qoobot.qoorag.repository.KnowledgeBaseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 检索服务：查询向量化 → pgvector 余弦相似度检索 → 两阶段重排 → 组装召回片段
+ * 检索服务（RAG-011 / RAG-012 / RAG-013）。
  * <p>
- * 使用 pgvector {@code <=>} 余弦距离算子，1 - (embedding <=> query_vec) = 余弦相似度。
- * 检索结果受 kbId + tenantId 约束，确保租户与知识库隔离（4.9）。
+ * 完整链路：查询向量化 → <b>向量 ANN 召回</b> + <b>词法全文召回</b> → RRF 名次融合 →
+ * 多样性去冗余 → 截断到 topK。
  * <p>
- * 检索增强（#retrieval-tuning，默认关闭不破坏现有行为，可在 application.yml 开启）：
+ * <b>多路召回</b>（{@code hybrid-rrf}，默认）：
  * <ul>
- *   <li>candidate-pool：先取更大的候选集，再重排裁剪到 topK，避免好结果被截断在 topK 之外；</li>
- *   <li>min-score：过滤低于相似度阈值的噪声候选，提升 Precision；</li>
- *   <li>rerank-mode：
- *     <ul>
- *       <li>{@code none}：原样返回（默认，行为不变）；</li>
- *       <li>{@code diversity}：按文档多样性轮询重排，避免单文档霸榜；</li>
- *       <li>{@code hybrid}：向量余弦 + 中文 bigram 词法信号做 RRF 融合重排，
- *           能从根上提升"语义重叠被大文档淹没"的短文档（如摘要/作者/讨论章）召回，
- *           同时用 diversity 去冗余、提升 Precision。</li>
- *     </ul>
- *   </li>
+ *   <li>向量路：pgvector HNSW 余弦相似度（RAG-010）；</li>
+ *   <li>词法路：PostgreSQL 全文检索（GIN + tsvector + ts_rank_cd，RAG-011）；</li>
+ *   <li>融合：RRF {@code 1/(k+rank)} 按<b>名次</b>融合，不依赖两路分值的可比性；</li>
+ *   <li>词法路可捞回「向量语义被大文档淹没」的短片段，也可命中向量模型不敏感的专名/型号/编号。</li>
  * </ul>
+ * <p>
+ * <b>重排模式</b>（{@code qoorag.retrieval.rerank-mode}）：
+ * <ul>
+ *   <li>{@code none}：原样返回向量召回（行为与改造前完全一致）；</li>
+ *   <li>{@code hybrid-rrf}（默认）：向量 + 词法 RRF 融合 + 多样性去冗余；</li>
+ *   <li>{@code diversity}：仅多样性重排（不引入词法路）；</li>
+ *   <li>{@code legacy-hybrid}：改造前的「向量 + Java bigram 覆盖率」伪混合，保留仅用于 A/B 对比，
+ *       不建议用于生产（无索引、无 IDF、长文档占优）。</li>
+ * </ul>
+ * <p>
+ * <b>线程安全</b>（RAG-013）：改造前用可变 {@code @Value} 字段承载请求级覆盖，
+ * 多线程并发检索/评估时会互相污染。现改为把策略收敛为不可变 {@link RetrievalStrategy}，
+ * 由调用方按请求传入；{@code overrideRerankConfig} 仅为兼容旧评估接口保留。
  * <p>
  * 注意：向量参数通过 JDBC {@code PreparedStatement.setObject(idx, PGvector)} 绑定，
  * 由 PostgreSQL 驱动正确识别为 vector 类型；若经 JPA 原生查询的 setParameter 绑定，
@@ -49,16 +59,17 @@ public class RetrieveService {
     private final JdbcTemplate jdbcTemplate;
     private final EmbeddingService embeddingService;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
+    private final LexicalSearchService lexicalSearchService;
 
     /** 候选池大小：0 = 直接使用 topK；>0 时先取 candidate-pool 个候选再做重排裁剪 */
     @Value("${qoorag.retrieval.candidate-pool:0}")
     private int candidatePool;
 
-    /** 最低相似度阈值：0.0 = 不过滤；>0 时过滤低于该余弦相似度的候选 */
+    /** 最低相似度阈值：0.0 = 不过滤；>0 时过滤低于该余弦相似度的向量候选 */
     @Value("${qoorag.retrieval.min-score:0.0}")
     private double minScore;
 
-    /** 重排模式：none / diversity / hybrid */
+    /** 重排模式：none / hybrid-rrf / diversity / legacy-hybrid */
     @Value("${qoorag.retrieval.rerank-mode:none}")
     private String rerankMode;
 
@@ -70,7 +81,47 @@ public class RetrieveService {
     @Value("${qoorag.retrieval.rrf-k:60}")
     private int rrfK;
 
-    /** 运行时覆盖检索策略（供评估接口临时对比不同策略，不影响 @Value 默认值） */
+    /** HNSW 查询期召回宽度 hnsw.ef_search：<=0 表示不设置，用 pgvector 默认值（40）。
+     *  调大 → 召回更高、延迟更高；数据量大或大量删除后建议调大（RAG-010） */
+    @Value("${qoorag.vector.hnsw.ef-search:40}")
+    private int hnswEfSearch;
+
+    public RetrieveService(JdbcTemplate jdbcTemplate,
+                           EmbeddingService embeddingService,
+                           KnowledgeBaseRepository knowledgeBaseRepository,
+                           LexicalSearchService lexicalSearchService) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.embeddingService = embeddingService;
+        this.knowledgeBaseRepository = knowledgeBaseRepository;
+        this.lexicalSearchService = lexicalSearchService;
+    }
+
+    // ===== 策略（RAG-013：不可变、按请求传入，避免共享可变状态）=====
+
+    /** 检索策略快照：一次检索全过程中口径一致的参数集合 */
+    public record RetrievalStrategy(String mode, int candidatePool, double minScore,
+                                    int diversityMaxPerDoc, int rrfK, int lexicalPool) {
+        public static RetrievalStrategy of(String mode, int pool, double minSc,
+                                           int maxPerDoc, int k, int lexicalPool) {
+            return new RetrievalStrategy(mode, Math.max(pool, 0), Math.max(minSc, 0.0),
+                    maxPerDoc, Math.max(k, 1), Math.max(lexicalPool, 0));
+        }
+    }
+
+    /** 当前配置生成默认策略（生产链路使用） */
+    public RetrievalStrategy defaultStrategy() {
+        return RetrievalStrategy.of(rerankMode, candidatePool, minScore, diversityMaxPerDoc,
+                rrfK, lexicalSearchService.getLexicalPool());
+    }
+
+    // ===== 兼容旧评估接口的运行时覆盖（已标注 deprecated，见类注释）=====
+
+    /**
+     * @deprecated 改用 {@link #retrieve(String, int, Long, Long, RetrievalStrategy)} 显式传策略。
+     *   保留仅为兼容既有 {@code /api/admin/eval} 的覆盖入参；并发调用存在共享状态竞争，
+     *   新代码请勿使用。
+     */
+    @Deprecated
     public void overrideRerankConfig(String mode, int pool, double minSc, int maxPerDoc, int k) {
         if (mode != null) this.rerankMode = mode;
         if (pool >= 0) this.candidatePool = pool;
@@ -84,25 +135,30 @@ public class RetrieveService {
     public double getMinScore() { return minScore; }
     public int getDiversityMaxPerDoc() { return diversityMaxPerDoc; }
     public int getRrfK() { return rrfK; }
+    public int getHnswEfSearch() { return hnswEfSearch; }
 
-    public RetrieveService(JdbcTemplate jdbcTemplate,
-                           EmbeddingService embeddingService,
-                           KnowledgeBaseRepository knowledgeBaseRepository) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.embeddingService = embeddingService;
-        this.knowledgeBaseRepository = knowledgeBaseRepository;
+    // ===== 检索入口 =====
+
+    /**
+     * 检索召回（使用默认策略）。
+     */
+    public List<RetrieveChunk> retrieve(String query, int topK, Long kbId, Long tenantId) {
+        return retrieve(query, topK, kbId, tenantId, defaultStrategy());
     }
 
     /**
-     * 检索召回：查询文本 → 向量化 → pgvector 余弦相似 top-候选 → 两阶段重排 → topK
+     * 检索召回（显式指定策略，线程安全）。
      *
      * @param query    检索问句
-     * @param topK     返回条数（默认 5）
-     * @param kbId     知识库 ID（来自 API Key）
-     * @param tenantId 租户 ID（来自 API Key）
-     * @return 重排后按相关性降序排列的召回片段
+     * @param topK     返回条数
+     * @param kbId     知识库 ID
+     * @param tenantId 租户 ID
+     * @param strategy 本次检索的策略快照
+     * @return 按相关性降序排列的召回片段
      */
-    public List<RetrieveChunk> retrieve(String query, int topK, Long kbId, Long tenantId) {
+    public List<RetrieveChunk> retrieve(String query, int topK, Long kbId, Long tenantId,
+                                        RetrievalStrategy strategy) {
+        RetrievalStrategy effective = (strategy != null) ? strategy : defaultStrategy();
         // 1. 权限校验：KB 存在且未被软删
         KnowledgeBase kb = knowledgeBaseRepository.findById(kbId)
                 .orElseThrow(() -> new RuntimeException("知识库不存在"));
@@ -112,8 +168,8 @@ public class RetrieveService {
         if (!kb.getTenantId().equals(tenantId)) {
             throw new RuntimeException("无权访问该知识库");
         }
-        log.info("检索 kbId={} tenantId={} topK={} rerank={} query='{}'", kbId, tenantId, topK,
-                rerankMode, query.length() > 100 ? query.substring(0, 100) + "..." : query);
+        log.info("检索 kbId={} tenantId={} topK={} mode={} query='{}'", kbId, tenantId, topK,
+                effective.mode(), query.length() > 100 ? query.substring(0, 100) + "..." : query);
 
         // 2. 查询向量化
         float[] queryVec;
@@ -127,112 +183,219 @@ public class RetrieveService {
             throw new RuntimeException("向量化返回为空");
         }
 
-        // 3. 取候选集（候选池 >= topK，便于重排阶段有更全的候选）
-        int cand = (candidatePool > 0) ? Math.max(candidatePool, topK) : topK;
-        List<RetrieveChunk> candidates = queryVectorDb(queryVec, cand, kbId, tenantId);
-        if (candidates.isEmpty()) {
-            return candidates;
+        // 3. 向量路召回（候选池 >= topK，便于重排阶段有更全的候选）
+        int cand = (effective.candidatePool() > 0) ? Math.max(effective.candidatePool(), topK) : topK;
+        List<RetrieveChunk> vectorCands = queryVectorDb(queryVec, cand, kbId, tenantId);
+        if (vectorCands.isEmpty()) {
+            return vectorCands;
         }
 
-        // 4. 最低相似度阈值过滤（去噪声，提升 Precision）
-        if (minScore > 0.0) {
-            List<RetrieveChunk> filtered = candidates.stream()
-                    .filter(c -> c.getScore() >= minScore)
+        // 4. 最低相似度阈值过滤（去噪声，提升 Precision；只作用于向量候选）
+        List<RetrieveChunk> candidates = vectorCands;
+        if (effective.minScore() > 0.0) {
+            List<RetrieveChunk> filtered = vectorCands.stream()
+                    .filter(c -> c.getScore() >= effective.minScore())
                     .collect(Collectors.toList());
-            log.info("阈值过滤 minScore={:.4f}: {} -> {} 条", minScore, candidates.size(), filtered.size());
+            log.info("阈值过滤 minScore={:.4f}: {} -> {} 条", effective.minScore(), vectorCands.size(), filtered.size());
             candidates = filtered;
         }
 
-        // 5. 重排
+        // 5. 重排 / 融合
+        String mode = effective.mode() == null ? "none" : effective.mode();
         List<RetrieveChunk> result;
-        if ("hybrid".equalsIgnoreCase(rerankMode)) {
-            result = hybridRerank(query, candidates, topK);
-        } else if ("diversity".equalsIgnoreCase(rerankMode)) {
-            result = diversityRerank(candidates, topK, diversityMaxPerDoc);
-        } else {
-            result = candidates;
+        switch (mode.toLowerCase(Locale.ROOT)) {
+            case "hybrid-rrf" -> result = hybridRrfRerank(query, candidates, topK, kbId, tenantId, effective);
+            case "legacy-hybrid" -> result = hybridRerank(query, candidates, topK);
+            case "diversity" -> result = diversityRerank(candidates, topK, effective.diversityMaxPerDoc());
+            default -> result = candidates;
         }
 
         // 6. 截断到 topK（重排阶段可能已裁剪，这里兜底）
         if (result.size() > topK) {
             result = result.subList(0, topK);
         }
-        log.info("检索完成，返回 {} 条结果（kbId={}, rerank={}）", result.size(), kbId, rerankMode);
+        log.info("检索完成，返回 {} 条结果（kbId={}, mode={}）", result.size(), kbId, mode);
         return result;
     }
 
-    /** pgvector 余弦相似度检索（native SQL，<=> 算子） */
+    /**
+     * pgvector 余弦相似度检索（native SQL，{@code <=>} 算子）。
+     * <p>
+     * HNSW ANN 索引生效时，通过会话级 GUC {@code hnsw.ef_search} 控制召回宽度（RAG-010）。
+     * 该 GUC 必须作用于「同一条连接的同一次事务」，否则不会生效或被连接池复用污染：
+     * 因此这里手动开事务并 {@code SET LOCAL}，事务提交后自动失效。
+     */
     private List<RetrieveChunk> queryVectorDb(float[] queryVec, int limit, Long kbId, Long tenantId) {
         String sql = "SELECT v.id, v.chunk_id, c.document_id, c.seq, c.content, "
+                + "c.heading_path, c.page_no, c.chunk_type, d.name AS document_name, "
                 + "1 - (v.embedding <=> ?) AS similarity "
                 + "FROM vector_data v JOIN chunk c ON c.id = v.chunk_id "
+                + "JOIN document d ON d.id = c.document_id "
                 + "WHERE v.kb_id = ? AND v.tenant_id = ? "
                 + "ORDER BY v.embedding <=> ? LIMIT ?";
 
         PGvector qv = new PGvector(queryVec);
-        RowMapper<RetrieveChunk> rowMapper = (rs, rn) -> new RetrieveChunk(
-                rs.getLong("id"),
-                rs.getLong("chunk_id"),
-                rs.getLong("document_id"),
-                rs.getInt("seq"),
-                rs.getString("content"),
-                rs.getDouble("similarity"));
+        RowMapper<RetrieveChunk> rowMapper = (rs, rn) -> {
+            RetrieveChunk c = new RetrieveChunk(
+                    rs.getLong("id"),
+                    rs.getLong("chunk_id"),
+                    rs.getLong("document_id"),
+                    rs.getInt("seq"),
+                    rs.getString("content"),
+                    rs.getDouble("similarity"));
+            c.setHeadingPath(rs.getString("heading_path"));
+            c.setPageNo(rs.getObject("page_no") != null ? rs.getInt("page_no") : null);
+            c.setChunkType(rs.getString("chunk_type"));
+            c.setDocumentName(rs.getString("document_name"));
+            return c;
+        };
 
-        return jdbcTemplate.query(sql, (ps) -> {
+        return jdbcTemplate.execute((ConnectionCallback<List<RetrieveChunk>>) con -> {
+            boolean prevAutoCommit = con.getAutoCommit();
+            List<RetrieveChunk> out = new ArrayList<>();
             try {
-                ps.setObject(1, qv);
-                ps.setLong(2, kbId);
-                ps.setLong(3, tenantId);
-                ps.setObject(4, qv);
-                ps.setInt(5, limit);
+                con.setAutoCommit(false);
+                if (hnswEfSearch > 0) {
+                    try (Statement st = con.createStatement()) {
+                        st.execute("SET LOCAL hnsw.ef_search = " + hnswEfSearch);
+                    }
+                }
+                try (PreparedStatement ps = con.prepareStatement(sql)) {
+                    ps.setObject(1, qv);
+                    ps.setLong(2, kbId);
+                    ps.setLong(3, tenantId);
+                    ps.setObject(4, qv);
+                    ps.setInt(5, limit);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        int rowNum = 0;
+                        while (rs.next()) {
+                            out.add(rowMapper.mapRow(rs, ++rowNum));
+                        }
+                    }
+                }
+                con.commit();
             } catch (SQLException e) {
-                throw new RuntimeException("向量参数绑定失败: " + e.getMessage(), e);
+                try {
+                    con.rollback();
+                } catch (SQLException ignored) {
+                    // 回滚失败时保留原始异常
+                }
+                throw new DataAccessResourceFailureException("向量检索执行失败: " + e.getMessage(), e);
+            } finally {
+                try {
+                    con.setAutoCommit(prevAutoCommit);
+                } catch (SQLException ignored) {
+                    // 连接状态恢复失败不影响返回结果
+                }
             }
-        }, rowMapper);
+            return out;
+        });
     }
 
+    // ===== 混合检索：向量 + 词法 RRF 融合（RAG-011 / RAG-012）=====
+
     /**
-     * 混合重排（hybrid）：向量余弦排序 + 中文 bigram 词法排序，做 RRF 融合。
-     * 词法信号能捕捉"查询关键词在片段中的命中"，从根上把被大文档语义淹没的
-     * 短文档（摘要/作者/讨论章）片段提上来；最后用 diversity 去冗余。
+     * 向量名次 + 词法名次 RRF 融合。
+     * <p>
+     * 两路候选取并集：词法路可以捞回纯词法命中（向量路未进候选池）的片段，
+     * 这是「真混合」相对「伪混合」的关键增量。
      */
+    private List<RetrieveChunk> hybridRrfRerank(String query, List<RetrieveChunk> vectorCands, int topK,
+                                                Long kbId, Long tenantId, RetrievalStrategy strategy) {
+        // 词法候选池与向量候选池口径一致，保证两路名次可比
+        int cand = (strategy.candidatePool() > 0)
+                ? Math.max(strategy.candidatePool(), topK) : Math.max(topK, vectorCands.size());
+        List<RetrieveChunk> lexCands = lexicalSearchService.search(
+                query, Math.max(strategy.lexicalPool(), cand), kbId, tenantId);
+        if (lexCands.isEmpty()) {
+            log.info("词法召回为空，退化为多样性重排（kbId={}）", kbId);
+            return diversityRerank(vectorCands, topK, strategy.diversityMaxPerDoc());
+        }
+
+        // 名次表（候选已按各自相关度降序，1-based）
+        Map<Long, Integer> vecRank = rankMap(vectorCands);
+        Map<Long, Integer> lexRank = rankMap(lexCands);
+
+        // 并集：以向量候选为主体（保留向量分数与元数据），补齐词法独有片段
+        Map<Long, RetrieveChunk> merged = new LinkedHashMap<>();
+        for (RetrieveChunk c : vectorCands) {
+            merged.put(c.getChunkId(), c);
+        }
+        int lexOnly = 0;
+        for (RetrieveChunk c : lexCands) {
+            RetrieveChunk existing = merged.get(c.getChunkId());
+            if (existing == null) {
+                // 纯词法命中：向量分无意义，置 0 并保留词法分
+                c.setScore(0.0);
+                merged.put(c.getChunkId(), c);
+                lexOnly++;
+            } else {
+                existing.setLexScore(c.getLexScore());
+            }
+        }
+        log.info("混合融合：向量 {} 条 + 词法 {} 条（其中词法独有 {} 条）",
+                vectorCands.size(), lexCands.size(), lexOnly);
+
+        // RRF 名次融合：1/(k + rank)，某一路缺失的名次记 0（等价于不贡献该项）
+        int k = strategy.rrfK();
+        List<RetrieveChunk> fused = new ArrayList<>(merged.values());
+        fused.sort((a, b) -> {
+            double sa = rrf(k, vecRank.get(a.getChunkId())) + rrf(k, lexRank.get(a.getChunkId()));
+            double sb = rrf(k, vecRank.get(b.getChunkId())) + rrf(k, lexRank.get(b.getChunkId()));
+            return Double.compare(sb, sa);
+        });
+        // 多样性去冗余（可选）
+        if (strategy.diversityMaxPerDoc() > 0) {
+            fused = diversityRerank(fused, topK, strategy.diversityMaxPerDoc());
+        }
+        return fused;
+    }
+
+    /** 候选列表 → chunkId 名次表（1-based，重复 chunkId 保留最靠前的名次） */
+    private static Map<Long, Integer> rankMap(List<RetrieveChunk> sorted) {
+        Map<Long, Integer> rank = new HashMap<>();
+        for (int i = 0; i < sorted.size(); i++) {
+            rank.putIfAbsent(sorted.get(i).getChunkId(), i + 1);
+        }
+        return rank;
+    }
+
+    /** RRF 分数：名次缺失时贡献 0 */
+    private static double rrf(int k, Integer rank) {
+        return (rank == null || rank <= 0) ? 0.0 : 1.0 / (k + rank);
+    }
+
+    // ===== 以下为 legacy-hybrid（改造前的伪混合），保留仅用于 A/B 对比，勿用于生产 =====
+
+    /** @deprecated 伪混合：向量序 + Java bigram 覆盖率 RRF，无索引、无 IDF、长文档占优。
+     *  仅作为改造前基线保留，与 {@code hybrid-rrf} 做 A/B 对比用。 */
+    @Deprecated
     private List<RetrieveChunk> hybridRerank(String query, List<RetrieveChunk> candidates, int topK) {
-        // 向量名次（candidates 已按相似度降序）
         Map<Long, Integer> vecRank = new HashMap<>();
         for (int i = 0; i < candidates.size(); i++) {
             vecRank.put(candidates.get(i).getChunkId(), i + 1);
         }
-        // 词法排序（按 query 与片段的 bigram 覆盖率降序）
         List<RetrieveChunk> lexSorted = new ArrayList<>(candidates);
         lexSorted.sort((a, b) -> Double.compare(lexicalScore(query, b), lexicalScore(query, a)));
         Map<Long, Integer> lexRank = new HashMap<>();
         for (int i = 0; i < lexSorted.size(); i++) {
             lexRank.put(lexSorted.get(i).getChunkId(), i + 1);
         }
-        // RRF 融合排序
         List<RetrieveChunk> fused = new ArrayList<>(candidates);
         fused.sort((a, b) -> {
-            double sa = rrf(vecRank.get(a.getChunkId())) + rrf(lexRank.get(a.getChunkId()));
-            double sb = rrf(vecRank.get(b.getChunkId())) + rrf(lexRank.get(b.getChunkId()));
+            double sa = rrf(rrfK, vecRank.get(a.getChunkId())) + rrf(rrfK, lexRank.get(a.getChunkId()));
+            double sb = rrf(rrfK, vecRank.get(b.getChunkId())) + rrf(rrfK, lexRank.get(b.getChunkId()));
             return Double.compare(sb, sa);
         });
-        // 多样性去冗余（可选）
         if (diversityMaxPerDoc > 0) {
             fused = diversityRerank(fused, topK, diversityMaxPerDoc);
         }
         return fused;
     }
 
-    /** RRF 分数：1 / (k + rank) */
-    private double rrf(int rank) {
-        return 1.0 / (rrfK + rank);
-    }
-
-    /**
-     * 文档多样性重排：按相关性降序，每轮从每个文档组取一个片段，
-     * 单文档最多保留 diversityMaxPerDoc 个，避免单文档霸榜、提升结果多样性与 Precision。
-     */
-    private List<RetrieveChunk> diversityRerank(List<RetrieveChunk> candidates, int topK, int maxPerDoc) {
+    /** 文档多样性重排：按相关性降序，每轮从每个文档组取一个片段，
+     *  单文档最多保留 diversityMaxPerDoc 个，避免单文档霸榜、提升结果多样性与 Precision。 */
+    private static List<RetrieveChunk> diversityRerank(List<RetrieveChunk> candidates, int topK, int maxPerDoc) {
         List<RetrieveChunk> sorted = new ArrayList<>(candidates); // 已按分数/融合分降序
         Map<Long, Queue<RetrieveChunk>> byDoc = new LinkedHashMap<>();
         for (RetrieveChunk c : sorted) {
@@ -266,8 +429,8 @@ public class RetrieveService {
         return out;
     }
 
-    /** 中文 bigram 集合（去空白），用于词法信号 */
-    private Set<String> bigrams(String text) {
+    /** 中文 bigram 集合（去空白），仅 legacy-hybrid 使用 */
+    private static Set<String> bigrams(String text) {
         Set<String> set = new HashSet<>();
         if (text == null) return set;
         String t = text.replaceAll("\\s+", "");
@@ -278,10 +441,10 @@ public class RetrieveService {
     }
 
     /**
-     * 词法相关性 = 查询 bigram 被片段覆盖的比例（查询覆盖率），
+     * 词法相关性 = 查询 bigram 被片段覆盖的比例（查询覆盖率），仅 legacy-hybrid 使用。
      * 侧重"查询的需求被该片段满足"，比 Jaccard 更适配检索场景。
      */
-    private double lexicalScore(String query, RetrieveChunk c) {
+    private static double lexicalScore(String query, RetrieveChunk c) {
         Set<String> qb = bigrams(query);
         if (qb.isEmpty()) return 0.0;
         Set<String> cb = bigrams(c.getContent());

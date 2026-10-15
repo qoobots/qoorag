@@ -35,6 +35,10 @@ public class QaTrace {
     @Column(columnDefinition = "TEXT")
     private String sources;
 
+    /** 单次问答全链路 trace（RAG-006 雏形）：query/topK/召回数/上下文用量/模板来源/token 用量 */
+    @Column(name = "trace_json", columnDefinition = "TEXT")
+    private String traceJson;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -56,6 +60,8 @@ public class QaTrace {
     public void setParams(String params) { this.params = params; }
     public String getSources() { return sources; }
     public void setSources(String sources) { this.sources = sources; }
+    public String getTraceJson() { return traceJson; }
+    public void setTraceJson(String traceJson) { this.traceJson = traceJson; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

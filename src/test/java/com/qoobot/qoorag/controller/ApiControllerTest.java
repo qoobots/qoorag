@@ -9,6 +9,7 @@ import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatService;
+import com.qoobot.qoorag.service.ContextAssembler;
 import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.junit.jupiter.api.AfterEach;
@@ -34,10 +35,11 @@ public class ApiControllerTest {
     RetrieveService retrieveService = mock(RetrieveService.class);
     ChatService chatService = mock(ChatService.class);
     RerankService rerankService = mock(RerankService.class);
+    ContextAssembler contextAssembler = mock(ContextAssembler.class);
     QaTraceRepository qaTraceRepository = mock(QaTraceRepository.class);
     MetricsConfig.RagMetrics ragMetrics = mock(MetricsConfig.RagMetrics.class);
     AuditService auditService = mock(AuditService.class);
-    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, rerankService, ragMetrics, auditService);
+    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, rerankService, contextAssembler, ragMetrics, auditService);
     MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -93,11 +95,18 @@ public class ApiControllerTest {
         Map<String, Object> llm = new HashMap<>();
         llm.put("answer", "A");
         llm.put("model", "qwen-plus");
+        llm.put("promptSource", "BUILTIN");
+        llm.put("promptVersion", 0);
         Map<String, Object> usage = new HashMap<>();
         usage.put("promptTokens", 10);
         usage.put("completionTokens", 5);
+        usage.put("totalTokens", 15);
         llm.put("usage", usage);
-        when(chatService.chat(eq("q"), anyList())).thenReturn(llm);
+        // RAG-041：上下文组装器返回已裁剪的片段与 Prompt 文本
+        List<RetrieveChunk> used = List.of(new RetrieveChunk(1L, 1L, 1L, 0, "ctx", 0.9));
+        when(contextAssembler.assemble(any()))
+                .thenReturn(new ContextAssembler.AssembledContext("【参考资料 1】ctx", used, 3, 0, 0));
+        when(chatService.chat(eq("q"), anyString(), eq(2L))).thenReturn(llm);
         when(qaTraceRepository.save(any(QaTrace.class))).thenAnswer(inv -> inv.getArgument(0));
 
         mockMvc.perform(post("/api/v1/chat")

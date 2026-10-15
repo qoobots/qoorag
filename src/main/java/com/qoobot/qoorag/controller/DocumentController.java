@@ -3,8 +3,10 @@ package com.qoobot.qoorag.controller;
 import com.qoobot.qoorag.common.Result;
 import com.qoobot.qoorag.common.SecurityContext;
 import com.qoobot.qoorag.entity.Document;
+import com.qoobot.qoorag.entity.IngestTask;
 import com.qoobot.qoorag.repository.DocumentRepository;
 import com.qoobot.qoorag.service.AuditService;
+import com.qoobot.qoorag.service.IngestQueueService;
 import com.qoobot.qoorag.service.IngestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,20 +18,28 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 文档管理（知识管理员，4.2 / 4.11） */
+/**
+ * 文档管理（知识管理员，4.2 / 4.11）。
+ * <p>
+ * RAG-030：上传改为<b>异步入库</b>——接口立即返回 {@code taskId}，后台线程执行
+ * 「解析 → 分块 → 向量化 → 入库」，进度/失败原因可查、失败可重试。
+ */
 @RestController
 @RequestMapping("/api/kb")
 public class DocumentController {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentController.class);
 
+    private final IngestQueueService ingestQueueService;
     private final IngestService ingestService;
     private final DocumentRepository documentRepository;
     private final AuditService auditService;
 
-    public DocumentController(IngestService ingestService,
+    public DocumentController(IngestQueueService ingestQueueService,
+                              IngestService ingestService,
                               DocumentRepository documentRepository,
                               AuditService auditService) {
+        this.ingestQueueService = ingestQueueService;
         this.ingestService = ingestService;
         this.documentRepository = documentRepository;
         this.auditService = auditService;
@@ -41,20 +51,24 @@ public class DocumentController {
         }
     }
 
-    /** 上传文档并异步入库（支持一次上传多个文件） */
+    /**
+     * 上传文档并异步入库（支持一次上传多个文件）。
+     * <p>立即返回每个文件的 taskId，不等待入库完成。
+     */
     @PostMapping("/{kbId}/documents")
     public Result upload(
             @PathVariable Long kbId,
             @RequestParam(value = "files", required = false) List<MultipartFile> files) {
         requireKbAdmin();
         Long tenantId = SecurityContext.get().getTenantId();
+        Long userId = SecurityContext.get().getUserId();
 
         if (files == null || files.isEmpty()) {
             return Result.fail("请选择要上传的文件");
         }
 
         List<Map<String, Object>> results = new ArrayList<>();
-        int successCount = 0;
+        int accepted = 0;
         for (MultipartFile file : files) {
             Map<String, Object> one = new HashMap<>();
             String filename = file.getOriginalFilename();
@@ -65,37 +79,33 @@ public class DocumentController {
             } else if (filename == null) {
                 one.put("status", "FAILED");
                 one.put("error", "文件名为空");
+            } else if (!supported(filename)) {
+                one.put("status", "FAILED");
+                one.put("error", "不支持的格式，仅支持 .txt / .md / .pdf");
             } else {
-                String lowerName = filename.toLowerCase();
-                if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".md") && !lowerName.endsWith(".pdf")) {
+                try {
+                    log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());
+                    IngestTask task = ingestQueueService.enqueue(file, kbId, tenantId, userId);
+                    auditService.log("UPLOAD_DOCUMENT", "Document", String.valueOf(task.getId()),
+                            null, filename + "（异步入库 taskId=" + task.getId() + "）");
+                    one.put("taskId", task.getId());
+                    one.put("status", task.getStatus());
+                    one.put("progress", task.getProgress());
+                    accepted++;
+                } catch (Exception e) {
                     one.put("status", "FAILED");
-                    one.put("error", "不支持的格式，仅支持 .txt / .md / .pdf");
-                } else {
-                    try {
-                        log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());
-                        Document doc = ingestService.ingest(file, kbId, tenantId);
-                        auditService.log("UPLOAD_DOCUMENT", "Document", String.valueOf(doc.getId()), null, filename);
-                        one.put("id", doc.getId());
-                        one.put("status", doc.getStatus());
-                    } catch (Exception e) {
-                        one.put("status", "FAILED");
-                        one.put("error", e.getMessage());
-                    }
+                    one.put("error", e.getMessage());
                 }
-            }
-            if (!"FAILED".equals(one.get("status"))) {
-                successCount++;
             }
             results.add(one);
         }
 
-        int failedCount = results.size() - successCount;
-        log.info("批量上传完成：kbId={}, 总数={}, 成功={}, 失败={}", kbId, results.size(), successCount, failedCount);
+        log.info("批量上传完成：kbId={}, 总数={}, 已入队={}", kbId, results.size(), accepted);
         return Result.ok(Map.of(
                 "total", results.size(),
-                "success", successCount,
-                "failed", failedCount,
-                "results", results
+                "accepted", accepted,
+                "results", results,
+                "message", "文档已进入异步入库队列，可通过任务查询接口查看进度"
         ));
     }
 
@@ -105,5 +115,38 @@ public class DocumentController {
         requireKbAdmin();
         List<Document> docs = documentRepository.findByKbIdAndDeletedAtIsNull(kbId);
         return Result.ok(docs);
+    }
+
+    /**
+     * 查询入库任务列表（RAG-030）。
+     * <p>含状态、阶段、进度百分比、失败原因、关联 documentId。
+     */
+    @GetMapping("/{kbId}/ingest-tasks")
+    public Result listTasks(@PathVariable Long kbId) {
+        requireKbAdmin();
+        return Result.ok(ingestQueueService.listByKb(kbId));
+    }
+
+    /** 查询单个入库任务详情 */
+    @GetMapping("/{kbId}/ingest-tasks/{taskId}")
+    public Result getTask(@PathVariable Long kbId, @PathVariable Long taskId) {
+        requireKbAdmin();
+        return Result.ok(ingestQueueService.get(kbId, taskId));
+    }
+
+    /** 重试失败的入库任务（临时文件仍在时可重试） */
+    @PostMapping("/{kbId}/ingest-tasks/{taskId}/retry")
+    public Result retryTask(@PathVariable Long kbId, @PathVariable Long taskId) {
+        requireKbAdmin();
+        Long userId = SecurityContext.get().getUserId();
+        IngestTask task = ingestQueueService.retry(kbId, taskId);
+        auditService.log("RETRY_INGEST_TASK", "IngestTask", String.valueOf(taskId),
+                null, "第 " + task.getRetryCount() + " 次重试", SecurityContext.get().getTenantId(), userId);
+        return Result.ok(task);
+    }
+
+    private static boolean supported(String filename) {
+        String lower = filename.toLowerCase();
+        return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".pdf");
     }
 }

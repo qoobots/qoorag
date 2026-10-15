@@ -3,6 +3,7 @@ package com.qoobot.qoorag.service;
 import com.qoobot.qoorag.common.BizException;
 import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.entity.PromptTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
@@ -12,8 +13,10 @@ import org.springframework.web.client.RestTemplate;
 import java.util.*;
 
 /**
- * LLM 问答服务：调用百炼 Chat API（OpenAI 兼容模式）
- * 基于检索上下文构建 RAG Prompt，调用 qwen-plus 生成回答。
+ * LLM 问答服务：调用百炼 Chat API（OpenAI 兼容模式）。
+ * <p>
+ * RAG-040：Prompt 模板由 {@link PromptTemplateService} 提供（KB 级 → 全局 → 内置默认），
+ * 不再硬编码在 Java 里；默认模板与改造前文本完全一致，默认行为零变化。
  */
 @Service
 public class ChatService {
@@ -23,49 +26,41 @@ public class ChatService {
     private final RestTemplate restTemplate;
     private final BailianConfig config;
     private final ContentSafetyService contentSafety;
+    private final PromptTemplateService promptTemplateService;
 
-    public ChatService(RestTemplate restTemplate, BailianConfig config, ContentSafetyService contentSafety) {
+    public ChatService(RestTemplate restTemplate,
+                       BailianConfig config,
+                       ContentSafetyService contentSafety,
+                       PromptTemplateService promptTemplateService) {
         this.restTemplate = restTemplate;
         this.config = config;
         this.contentSafety = contentSafety;
+        this.promptTemplateService = promptTemplateService;
     }
 
     /**
-     * RAG 问答：检索上下文 + 用户问题 → LLM 生成回答
+     * RAG 问答：模板渲染 + 检索上下文 + 用户问题 → LLM 生成回答。
      *
-     * @param query          用户问题
-     * @param contextChunks  检索召回的参考片段（内容文本）
-     * @return LLM 原始响应 Map：{answer, model, usage: {prompt_tokens, completion_tokens, total_tokens}}
+     * @param query        用户问题
+     * @param contextText  已组装好的参考资料文本（由 {@link ContextAssembler} 产出）
+     * @param kbId         知识库 ID（用于选择 Prompt 模板；可为 null）
+     * @return LLM 响应 Map：{@code answer, model, usage:{...}, promptSource, promptTemplateId, promptVersion}
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> chat(String query, List<String> contextChunks) {
+    public Map<String, Object> chat(String query, String contextText, Long kbId) {
         // 0. 内容安全检测（#18；关闭时 fail-open 放行）
         ContentSafetyService.Result safety = contentSafety.checkText(query);
         if (safety.verdict == ContentSafetyService.Verdict.BLOCKED) {
             throw new BizException(ErrorCode.CONTENT_BLOCKED, "提问内容命中内容安全拦截：" + safety.reason);
         }
 
-        // 1. 构建 RAG Prompt
-        StringBuilder contextBuilder = new StringBuilder();
-        for (int i = 0; i < contextChunks.size(); i++) {
-            contextBuilder.append("【参考资料 ").append(i + 1).append("】\n")
-                    .append(contextChunks.get(i)).append("\n\n");
-        }
-
-        String systemPrompt = """
-                你是一个基于知识库的智能问答助手。请严格根据以下参考资料回答用户问题。
-                
-                规则：
-                1. 仅使用【参考资料】中的信息作答，不要编造。
-                2. 如果参考资料不足以回答，请如实告知"参考资料中未包含相关信息"。
-                3. 回答简洁准确，必要时标注引用序号。
-                4. 使用中文回答。
-                
-                """ + contextBuilder;
+        // 1. 渲染 Prompt（KB 级模板 → 全局模板 → 内置默认）
+        PromptTemplateService.ResolvedTemplate tpl =
+                promptTemplateService.resolveAndRender(kbId, PromptTemplate.SCENE_CHAT, contextText, query);
 
         // 2. 构建 OpenAI 兼容请求
         List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", systemPrompt));
+        messages.add(Map.of("role", "system", "content", tpl.content()));
         messages.add(Map.of("role", "user", "content", query));
 
         Map<String, Object> requestBody = new HashMap<>();
@@ -83,13 +78,12 @@ public class ChatService {
 
         // 3. 调用 LLM
         try {
-            log.info("调用百炼 Chat API，model={}，query='{}'",
-                    config.getChatModel(),
+            log.info("调用百炼 Chat API，model={}，prompt 来源={}（模板 id={} v={}），query='{}'",
+                    config.getChatModel(), tpl.source(), tpl.templateId(), tpl.version(),
                     query.length() > 100 ? query.substring(0, 100) + "..." : query);
 
             ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
             Map<String, Object> body = response.getBody();
-
             if (body == null) {
                 throw new RuntimeException("Chat API 返回为空");
             }
@@ -121,6 +115,10 @@ public class ChatService {
                     "completionTokens", completionTokens,
                     "totalTokens", totalTokens
             ));
+            // RAG-040：模板溯源，便于对比不同模板的效果
+            result.put("promptSource", tpl.source());
+            result.put("promptTemplateId", tpl.templateId());
+            result.put("promptVersion", tpl.version());
             return result;
 
         } catch (Exception e) {

@@ -64,18 +64,43 @@ qoorag:
     embedding-model: text-embedding-v2
     chat-model: qwen-plus
     embedding-batch-size: 25
-  # 检索增强（#retrieval-tuning）：默认 hybrid（向量余弦 + 中文 bigram 词法 RRF 融合重排），
-  # 评估显示 Recall@2 49.2%→57.0%、HitRate 89%→97%、MRR 不降反升（代价 Precision 70.3%→57.8%）。
-  # 评估时仍可通过 POST /api/admin/eval 的 rerankMode/candidatePool/minScore/diversityMaxPerDoc 覆盖对比；
-  # hybrid / diversity 均对生产检索（含 Chat RAG）生效。
+  # 检索增强（#retrieval-tuning）
+  # 模式说明（rerank-mode）：
+  #   none          仅向量 ANN 召回（改造前行为，用于 A/B 基线）
+  #   hybrid-rrf    【默认】向量路（pgvector HNSW 余弦）+ 词法路（PG 全文检索 GIN/ts_rank_cd）
+  #                 RRF 名次融合 + 多样性去冗余。词法路可捞回向量被大文档淹没的短片段，
+  #                 也命中专名/型号/编号类 query。
+  #   diversity     仅向量路 + 多样性去冗余（不引入词法路）
+  #   legacy-hybrid 改造前的「向量 + Java bigram 覆盖率」伪混合，仅保留作 A/B 基线，勿用于生产
+  #                 （无索引、无 IDF、长文档天然占优）
+  # 历史基线（legacy-hybrid，评测集 10 条）：Recall@2 49.2%→57.0%、HitRate 89%→97%、
+  #                 Precision 70.3%→57.8%；cand=200 + topK=20 下 Recall≈93%（见 eval_sweep3）
   retrieval:
     candidate-pool: 200      # 放大候选池：让向量排名靠后的相关文档也能进入重排（Recall 关键杠杆）
     min-score: 0.0           # 最低相似度阈值，0=不过滤
-    rerank-mode: hybrid      # none | diversity | hybrid
+    rerank-mode: hybrid-rrf  # none | hybrid-rrf | diversity | legacy-hybrid
     diversity-max-per-doc: 2 # 多样性重排时单文档最多保留片段数
     rrf-k: 60                # RRF 融合平滑常数
     top-k: 20                # 生产检索/问答默认召回条数；cand=200+topK=20 下 Recall≈93%（见 eval_sweep3）
+    lexical-pool: 200        # 词法路召回条数（RAG-011）；0 = 关闭词法检索
+    lexical-min-score: 0.0   # 最低词法相关度（ts_rank_cd），0=不过滤
+    # 上下文工程（RAG-041）：参考资料组装
+    max-context-tokens: 3000 # 喂给 LLM 的参考资料估算 token 上限；<=0 不限制
+    context-reorder: true    # Lost-in-the-Middle 缓解：最相关片段放首尾、次相关放中间
+    max-chunk-chars: 1200    # 单块在 Prompt 中的最大字符数；<=0 不截断
     rerank:
-      enabled: false         # 方案2：开启后对已召回 top-k 候选做 cross-encoder 精排（百炼 rerank），再截断到 rerank-top-n 喂大模型
+      enabled: true         # 方案2：开启后对已召回 top-k 候选做 cross-encoder 精排（百炼 rerank），再截断到 rerank-top-n 喂大模型
+      endpoint: ${QOORAG_RERANK_ENDPOINT:https://llm-uwv46c0b79p0xq8h.cn-beijing.maas.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}  # 百炼 rerank 专属域名（MAAS 工作空间），需把 REPLACE_WORKSPACE_ID 换成真实业务空间 ID
       top-n: 5               # 精排后保留条数（保住召回的同时压低噪声、节省 token）
-      model: gte-rerank       # 百炼 rerank 模型（如 gte-rerank / text-rerank），密钥复用 qoorag.bailian.api-key
+      model: qwen3-vl-rerank       # 百炼 rerank 模型（gte-rerank 已于 2026-05-30 下线，推荐 qwen3-rerank），密钥复用 qoorag.bailian.api-key
+  # 异步入库（RAG-030）
+  ingest:
+    chunk-strategy: structure  # 分块策略：structure（结构感知，RAG-021）/ fixed（改造前固定长度）
+    workers: 2                 # 后台入库线程数；过大将同时压满 embedding API 与 DB
+    queue-capacity: 100        # 内存队列容量；超出后由调用线程直接执行（不丢任务）
+  # 向量库索引参数（RAG-010）：HNSW ANN 索引由启动期 PgvectorIndexMigrator 幂等创建
+  vector:
+    hnsw:
+      m: 16               # HNSW 每节点最大连接数（构建期参数，改后需 REINDEX）
+      ef-construction: 128 # HNSW 构建期搜索宽度（构建期参数，改后需 REINDEX）
+      ef-search: 40        # HNSW 查询期搜索宽度（运行时生效，调大提高召回/延迟；<=0 用 pgvector 默认值）
