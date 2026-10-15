@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.common.HttpRetryUtil;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +24,8 @@ import java.util.*;
  * <ul>
  *   <li>开关 {@code qoorag.retrieval.rerank.enabled} 默认关闭，不影响现有行为；</li>
  *   <li>精排失败时优雅降级：返回原始候选（退化为未精排的宽召回），保证 Chat 不中断；</li>
- *   <li>复用百炼 {@code /rerank} 兼容接口（与 embedding 同源密钥）。</li>
+ *   <li>使用百炼 rerank 模型（默认 qwen3-rerank），走 MAAS 工作空间专属域名
+ *       {@code qoorag.retrieval.rerank.endpoint}（与 embedding 同源密钥）。</li>
  * </ul>
  */
 @Service
@@ -40,8 +42,26 @@ public class RerankService {
     @Value("${qoorag.retrieval.rerank.top-n:5}")
     private int topN;
 
-    @Value("${qoorag.retrieval.rerank.model:gte-rerank}")
+    @Value("${qoorag.retrieval.rerank.model:qwen3-rerank}")
     private String model;
+
+    /** 百炼 rerank 接口完整地址。qwen3-rerank 走 MAAS 工作空间专属域名，
+     *  形如 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-api/v1/reranks，
+     *  需把 {WorkspaceId} 换成真实业务空间 ID（可在 application.yml 或环境变量 QOORAG_RERANK_ENDPOINT 配置）。
+     *  注意：与 embeddings/chat 的 dashscope.aliyuncs.com/compatible-mode/v1 不是同一个域。 */
+    @Value("${qoorag.retrieval.rerank.endpoint:}")
+    private String endpoint;
+
+    /** 精排服务密钥。为空时回退到 Embedding / 共享密钥。
+     *  <p>单独拆出的原因：rerank 的 endpoint 往往与 chat、embedding 不同域
+     *  （例如百炼 MAAS 工作空间域名 vs dashscope），密钥自然也可能不同——
+     *  当 chat 用 DeepSeek 而 rerank 用百炼时，共用一把 key 必然有一边 401。 */
+    @Value("${qoorag.retrieval.rerank.api-key:}")
+    private String apiKey;
+
+    /** 检索场景指令：引导 rerank 模型按"问答检索"策略排序（优先给能回答 Query 的文档高分） */
+    private static final String RETRIEVE_INSTRUCT =
+            "Given a web search query, retrieve relevant passages that answer the query.";
 
     /** 单次 rerank 的最大文档数（百炼限制保护，超出部分不精排、原序追加） */
     private static final int MAX_DOCS = 100;
@@ -53,6 +73,15 @@ public class RerankService {
 
     public boolean isEnabled() { return enabled; }
     public int getTopN() { return topN; }
+    public String getEndpoint() { return endpoint; }
+
+    /** 实际使用的精排密钥：rerank 专用 > embedding > 共享 */
+    public String resolveApiKey() {
+        if (apiKey != null && !apiKey.isBlank()) {
+            return apiKey;
+        }
+        return config.getEmbeddingApiKey();
+    }
 
     /**
      * 对召回候选做精排并返回截断后的结果。
@@ -70,6 +99,11 @@ public class RerankService {
             return candidates;
         }
 
+        // endpoint 未配置（如未填入百炼工作空间 ID）时直接降级，避免无意义的错误调用
+        if (endpoint == null || endpoint.isBlank()) {
+            return fallback(candidates, "rerank endpoint 未配置");
+        }
+
         // 拆分：参与精排的前 MAX_DOCS 条 + 余下保持原序（避免超出 API 限制时丢失候选）
         List<RetrieveChunk> toRerank = candidates.subList(0, Math.min(candidates.size(), MAX_DOCS));
         List<RetrieveChunk> rest = candidates.size() > MAX_DOCS
@@ -82,40 +116,76 @@ public class RerankService {
                 docs.add(c.getContent() == null ? "" : c.getContent());
             }
 
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", model);
-            requestBody.put("query", query);
-            requestBody.put("documents", docs);
-            requestBody.put("return_documents", false);
-            requestBody.put("top_n", toRerank.size());
+            // 请求体格式随 endpoint 类型自适应：
+            //  - MAAS text-rerank 服务（路径含 /services/rerank/，如 gte-rerank-v2）：嵌套体
+            //      { model, input: { query, documents }, parameters: { top_n } }
+            //  - 兼容模式（compatible-api/v1/reranks，如 qwen3-rerank）：扁平体
+            //      { model, query, documents, top_n, instruct }
+            Map<String, Object> requestBody;
+            if (endpoint.contains("/services/rerank/")) {
+                Map<String, Object> input = new LinkedHashMap<>();
+                input.put("query", query);
+                input.put("documents", docs);
+                Map<String, Object> parameters = new LinkedHashMap<>();
+                parameters.put("top_n", toRerank.size());
+                requestBody = new LinkedHashMap<>();
+                requestBody.put("model", model);
+                requestBody.put("input", input);
+                requestBody.put("parameters", parameters);
+            } else {
+                requestBody = new LinkedHashMap<>();
+                requestBody.put("model", model);
+                requestBody.put("query", query);
+                requestBody.put("documents", docs);
+                requestBody.put("top_n", toRerank.size());
+                requestBody.put("instruct", RETRIEVE_INSTRUCT);
+            }
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(config.getApiKey());
+            headers.setBearerAuth(resolveApiKey());
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
-            String url = config.getBaseUrl() + "/rerank";
 
             log.info("调用百炼 Rerank API，model={}，候选数={}", model, toRerank.size());
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+            ResponseEntity<Map> response = HttpRetryUtil.executeWithRetry(
+                    () -> restTemplate.postForEntity(endpoint, request, Map.class),
+                    3, 500, log, "Rerank API");
             Map<String, Object> body = response.getBody();
-            if (body == null || !body.containsKey("output")) {
-                log.error("Rerank API 返回异常: {}", body);
+            if (body == null) {
                 return fallback(candidates, "API 返回为空");
             }
 
-            @SuppressWarnings("unchecked")
-            Map<String, Object> output = (Map<String, Object>) body.get("output");
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> results = (List<Map<String, Object>>) output.get("results");
+            // 兼容两种响应结构：qwen3-rerank 返回顶层 results；gte-rerank-v2 返回 output.results
+            List<Map<String, Object>> results;
+            if (body.containsKey("output")) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> output = (Map<String, Object>) body.get("output");
+                results = (List<Map<String, Object>>) output.get("results");
+            } else if (body.containsKey("results")) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> topResults = (List<Map<String, Object>>) body.get("results");
+                results = topResults;
+            } else {
+                log.error("Rerank API 返回异常: {}", body);
+                return fallback(candidates, "API 返回无 results");
+            }
             if (results == null || results.isEmpty()) {
                 return fallback(candidates, "results 为空");
             }
 
-            // index -> 相关性分数
+            // index -> 相关性分数（兼容 relevance_score / score 两种字段名）
             Map<Integer, Double> scoreByIndex = new HashMap<>();
             for (Map<String, Object> r : results) {
                 int idx = ((Number) r.get("index")).intValue();
-                double sc = ((Number) r.get("relevance_score")).doubleValue();
+                Object s = r.get("relevance_score");
+                if (s == null) {
+                    s = r.get("score");
+                }
+                if (s == null) {
+                    log.error("Rerank 结果缺少分数字段: {}", r);
+                    return fallback(candidates, "results 缺少分数字段");
+                }
+                double sc = ((Number) s).doubleValue();
                 scoreByIndex.put(idx, sc);
             }
 

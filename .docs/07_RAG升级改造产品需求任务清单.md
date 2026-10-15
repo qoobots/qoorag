@@ -404,8 +404,53 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项全部完成。** M2 剩余 RAG-023（Contextual Chunking，8d），M3/M4 未启动。
-> 下一步建议：RAG-023（摄入侧单项收益最大，且只影响离线入库、不增加在线延迟），随后 M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮）。
+> **P0（M1）13 项 + M2 全部完成。** 下一步建议：M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮），
+> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
+
+---
+
+## 附：密钥与工程 Docker 配置整理（2026-10-15）
+
+> 本节记录一次独立于上述任务清单的配置治理，起因是 `.env` 里的 API Key **从未被应用读取**，
+> 且数据库依赖机器上其他项目的 PostgreSQL 容器。
+
+### A.1 发现的问题
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | Spring Boot **不会自动读取 `.env`**，`.env` 里的 key 是死文件 | 密钥必须手工设成 OS 环境变量才能生效 |
+| 2 | `.env` 只有 `deepseek` + 一行裸 key，无变量名 | 无法知道该 key 属于哪个角色 |
+| 3 | `baseUrl` + `apiKey` **一套配置同时供 Chat 与 Embedding** | 换只提供 Chat 的 Provider（DeepSeek）会把向量化一起搞坏 |
+| 4 | 空串截断回退链：`.env` 里 `EMBEDDING_API_KEY=` 留空时，Spring 的 `${A:${B:}}` 把空串当"已设置"，不再回退到 `ALI-API-KEY` | 明明有可用密钥却报未配置 |
+| 5 | 密钥缺失时报 `向量化失败: 401 Unauthorized: [no body]` | 分不清是没配 key、key 错了还是配错角色 |
+| 6 | 数据库连的是其他项目的 PostgreSQL 容器 | 环境耦合，换机器/他人无法复现 |
+| 7 | `ADMIN_DEFAULT_PASSWORD=123456` 被工具链的密钥扫描器改写成 `<SECRET_xxx>` 占位符 | 落盘密码与预期不符，登录失败且极难排查 |
+
+### A.2 落地的改造
+
+| 组件 | 说明 |
+|---|---|
+| `DotenvEnvironmentPostProcessor` | 启动时把 `.env` 注入 Spring 环境，**OS 环境变量优先**（生产/CI 可直接覆盖，无需改文件）。支持注释、引号、`export` 前缀、CRLF；定位工作目录与 jar 同级目录。21 个单测 |
+| `BailianConfig` 按角色拆分 | Chat / Embedding 各自独立配置 `base-url` + `api-key`，未配置时逐级回退。**两角色回退顺序不同**：Embedding 是 `embedding-* > 旧版百炼(ALI-API-KEY) > 共享`，因为 Embedding 历来用 `ALI-API-KEY`，不能反过来继承已切到 DeepSeek 的 Chat key。13 个单测 |
+| `ProviderReadinessChecker` | 启动打印各角色 Provider 状态表；能识别"Embedding 密钥回退沿用了 Chat 密钥且两者不同域"这一典型误配并给出修复指引 |
+| `RerankService` 独立密钥 | `qoorag.retrieval.rerank.api-key`，留空回退到 Embedding 密钥——rerank 与 chat 常不同域，共用一把 key 必有一边 401 |
+| `application.yml` 环境变量接线 | 补上 `DB_HOST`/`DB_PORT`/`RERANK_ENABLED`/`RERANK_TOP_N`/`RERANK_MODEL`/`CONTENT_SAFETY_ENABLED` 等此前硬编码或未接线的项 |
+| `docker-compose.yml` | 重建为工程自包含编排：`qoorag-postgres`/`qoorag-redis`/`qoorag-app`，宿主端口 **5433/6380**（避免与他项目 5432/6379 冲突），健康检查 + `depends_on: condition: service_healthy`，应用走 `profiles: ["app"]` 不干扰日常开发 |
+| `Dockerfile` + `.dockerignore` | 多阶段构建，JRE 运行，非 root 用户，`-Dfile.encoding=UTF-8`；`.env` 明确排除在镜像上下文外 |
+| `.env` / `.env.example` | 按「基础设施 / Chat / Embedding / Rerank / 内容安全」分节并加注释；`.env` 已在 `.gitignore` 中，仓库只提交占位符模板 |
+
+### A.3 验证结果（真实容器 + 真实启动）
+
+- `docker compose up -d` 起 `qoorag-postgres`(5433) + `qoorag-redis`(6380)，均 healthy；`sql/init.sql` 建 13 张表 + vector 扩展
+- 应用连接本工程数据库启动成功，`.env` 加载 24 项，9 项 schema 迁移生效，HNSW 索引就绪，向量维度对账 `vector(1536)`
+- 上传文档返回 `taskId` 即时响应 → 异步入库执行 → 失败时带明确原因且不影响应用（链路正确，仅因密钥无效而失败）
+- 登录/建库等接口全部通过
+
+### A.4 待办（需用户提供有效密钥）
+
+1. **`EMBEDDING_API_KEY` 当前解析到 User 作用域的 `ALI-API-KEY`，该 key 已失效**（直连百炼亦返回 401），向量化不可用。需在 `.env` 填入有效的阿里云百炼 / OpenAI / 其它 OpenAI 兼容服务的 embedding key
+2. DeepSeek chat key 已验证有效；注意 `deepseek-flash` 为推理模型，回答前会先产出 `reasoning_content`，如需更简洁可改用非推理模型
+3. 管理员密码已改为 `qoorag@Admin2026`（原 `123456` 会被密钥扫描器改写，**不要再用弱口令**）
 
 > 按 1 名开发满负荷估算；2 人并行时墙钟时间约为 60%（需考虑任务间依赖串行）。
 

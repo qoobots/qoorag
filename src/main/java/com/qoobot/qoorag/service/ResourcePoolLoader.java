@@ -34,9 +34,16 @@ public class ResourcePoolLoader implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
+            // 共享默认值（角色未单独配置时回退到这里）
             applyIfPresent("LLM", "base_url", bailianConfig::setBaseUrl);
             applyIfPresent("LLM", "api_key", bailianConfig::setApiKey);
             applyIfPresent("LLM", "chat_model", bailianConfig::setChatModel);
+            // Chat 角色覆盖（LLM 域下的 chat_* 键优先于共享值）
+            applyIfPresent("LLM", "chat_base_url", bailianConfig::setChatBaseUrl);
+            applyIfPresent("LLM", "chat_api_key", bailianConfig::setChatApiKey);
+            // Embedding 角色（EMBEDDING 域下的键独立于 LLM，便于 Chat 与向量化用不同 Provider）
+            applyIfPresent("EMBEDDING", "base_url", bailianConfig::setEmbeddingBaseUrl);
+            applyIfPresent("EMBEDDING", "api_key", bailianConfig::setEmbeddingApiKey);
             applyIfPresent("EMBEDDING", "embedding_model", bailianConfig::setEmbeddingModel);
             String batch = getRaw("EMBEDDING", "embedding_batch_size");
             if (batch != null && !batch.isBlank()) {

@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.common.HttpRetryUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
@@ -53,14 +54,17 @@ public class EmbeddingService {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(config.getApiKey());
+            headers.setBearerAuth(config.getEmbeddingApiKey());
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
-            String url = config.getBaseUrl() + "/embeddings";
+            String url = config.getEmbeddingBaseUrl() + "/embeddings";
 
             try {
-                log.info("调用百炼 Embedding API，批量={}/{}", batch.size(), texts.size());
-                ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+                log.info("调用 Embedding API，model={}，批量={}/{}",
+                        config.getEmbeddingModel(), batch.size(), texts.size());
+                ResponseEntity<Map> response = HttpRetryUtil.executeWithRetry(
+                        () -> restTemplate.postForEntity(url, request, Map.class),
+                        3, 500, log, "Embedding API");
                 Map<String, Object> body = response.getBody();
 
                 if (body == null || !body.containsKey("data")) {

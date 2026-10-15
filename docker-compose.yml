@@ -1,34 +1,109 @@
-version: "3.9"
+# ============================================================================
+# qoorag 工程 Docker 编排（本项目自包含，不依赖机器上其他项目的数据库）
+#
+# 快速开始：
+#   docker compose up -d                 # 启动 PostgreSQL + Redis（默认）
+#   docker compose --profile app up -d   # 连同应用一起启动
+#   docker compose ps                    # 查看状态
+#   docker compose logs -f               # 跟踪日志
+#   docker compose down                  # 停止（保留数据卷）
+#   docker compose down -v               # 停止并删除数据卷（慎用）
+#
+# 设计说明：
+#   1. 端口刻意用 5433 / 6380 而非 5432 / 6379，避免与机器上其他项目的
+#      PostgreSQL / Redis 冲突。.env 中的 DB_PORT / REDIS_PORT 需与之保持一致。
+#   2. 凭证、模型密钥统一来自仓库根目录的 .env（env_file），保证
+#      "宿主机直接跑" 与 "容器里跑" 读到同一份配置。
+#   3. sql/init.sql 只在数据卷首次初始化时执行（建表 + 向量扩展 + RLS）；
+#      后续增量变更由启动期 RagSchemaMigrator 幂等迁移，无需手动执行 SQL。
+#   4. 应用不在默认 profile 中：日常开发用 `mvn spring-boot:run` 更顺手，
+#      需要"一条命令起全栈"时再加 --profile app。
+# ============================================================================
+
+name: qoorag
 
 services:
   postgres:
     image: ankane/pgvector:latest
     container_name: qoorag-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: qoorag
-      POSTGRES_USER: qoorag
-      POSTGRES_PASSWORD: qoorag
+      POSTGRES_DB: ${DB_NAME:-qoorag}
+      POSTGRES_USER: ${DB_USERNAME:-qoorag}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-qoorag}
+      # 让容器内应用与容器外应用连的都是同一个库/用户
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5433}:5432"
     volumes:
+      # 首次初始化（数据卷为空）时执行：建表、vector 扩展、RLS 策略
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - pgdata:/var/lib/postgresql/data
+      - qoorag-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U qoorag"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-qoorag} -d ${DB_NAME:-qoorag}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
     container_name: qoorag-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - qoorag-redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # 应用本体（可选）：docker compose --profile app up -d
+  # 依赖基础设施健康后才启动，避免启动竞态。
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qoorag-app
+    restart: unless-stopped
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 容器内通过服务名互相访问，而非 127.0.0.1
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-qoorag}
+      DB_USERNAME: ${DB_USERNAME:-qoorag}
+      DB_PASSWORD: ${DB_PASSWORD:-qoorag}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # LLM Provider 密钥（来自 .env，与宿主机开发共用一份）
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v2}
+      RERANK_ENABLED: ${RERANK_ENABLED:-false}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      QOORAG_RERANK_ENDPOINT: ${QOORAG_RERANK_ENDPOINT:-}
+      ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD:-}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
       retries: 10
+      start_period: 40s
 
 volumes:
-  pgdata:
+  qoorag-pgdata:
+  qoorag-redisdata:

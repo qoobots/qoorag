@@ -3,9 +3,11 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://127.0.0.1:5432/qoorag
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:}
+    # DB_HOST / DB_PORT 可通过 .env 覆盖：本工程 docker-compose 默认把容器映射到宿主 5433，
+    # 以避免与机器上其他项目的 PostgreSQL（多为 5432）冲突。
+    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:5432}/qoorag
+    username: ${DB_USERNAME:qoorag}
+    password: ${DB_PASSWORD:qoorag}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -51,19 +53,35 @@ qoorag:
     audit-retention-days: 180
   # 内容安全（#18）：默认关闭；开启需配置阿里云密钥。关闭或异常时 fail-open 放行。
   content-safety:
-    enabled: false
+    enabled: ${CONTENT_SAFETY_ENABLED:false}
     aliyun:
       access-key: ${CONTENT_SAFETY_ALIYUN_AK:}
       secret-key: ${CONTENT_SAFETY_ALIYUN_SK:}
       region: cn-shanghai
       endpoint: https://green.cn-shanghai.aliyuncs.com
-  # 阿里云百炼大模型（OpenAI 兼容模式）
+  # LLM Provider（OpenAI 兼容模式）。按角色拆分：Chat / Embedding / Rerank 可各自指向不同 Provider。
+  #   - 共享默认值（base-url / api-key）：角色未单独配置时回退到这里（兼容旧配置）
+  #   - Chat     ← LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL
+  #   - Embedding← EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL
+  #   - Rerank   ← RERANK_API_KEY / QOORAG_RERANK_ENDPOINT
+  # 注意：DeepSeek 只提供 Chat 模型（deepseek-flash / deepseek-v4-pro），不提供 embedding，
+  #       因此 embedding 必须另配 Provider，否则 RAG 核心链路不可用（启动期会明确告警）。
   bailian:
-    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api-key: ${ALI-API-KEY:}
-    embedding-model: text-embedding-v2
-    chat-model: qwen-plus
-    embedding-batch-size: 25
+    # ---- 共享默认值（旧配置兼容层）----
+    base-url: ${LLM_BASE_URL:}
+    api-key: ${LLM_API_KEY:}
+    # ---- 旧版百炼专用变量（历史默认来源，Embedding 历来用它）----
+    legacy-base-url: ${BAILIAN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    legacy-api-key: ${ALI-API-KEY:}
+    # ---- Chat 角色 ----
+    chat-base-url: ${LLM_BASE_URL:}
+    chat-api-key: ${LLM_API_KEY:}
+    chat-model: ${LLM_CHAT_MODEL:qwen-plus}
+    # ---- Embedding 角色 ----
+    embedding-base-url: ${EMBEDDING_BASE_URL:}
+    embedding-api-key: ${EMBEDDING_API_KEY:}
+    embedding-model: ${EMBEDDING_MODEL:text-embedding-v2}
+    embedding-batch-size: ${EMBEDDING_BATCH_SIZE:25}
   # 检索增强（#retrieval-tuning）
   # 模式说明（rerank-mode）：
   #   none          仅向量 ANN 召回（改造前行为，用于 A/B 基线）
@@ -89,10 +107,11 @@ qoorag:
     context-reorder: true    # Lost-in-the-Middle 缓解：最相关片段放首尾、次相关放中间
     max-chunk-chars: 1200    # 单块在 Prompt 中的最大字符数；<=0 不截断
     rerank:
-      enabled: true         # 方案2：开启后对已召回 top-k 候选做 cross-encoder 精排（百炼 rerank），再截断到 rerank-top-n 喂大模型
-      endpoint: ${QOORAG_RERANK_ENDPOINT:https://llm-uwv46c0b79p0xq8h.cn-beijing.maas.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}  # 百炼 rerank 专属域名（MAAS 工作空间），需把 REPLACE_WORKSPACE_ID 换成真实业务空间 ID
-      top-n: 5               # 精排后保留条数（保住召回的同时压低噪声、节省 token）
-      model: qwen3-vl-rerank       # 百炼 rerank 模型（gte-rerank 已于 2026-05-30 下线，推荐 qwen3-rerank），密钥复用 qoorag.bailian.api-key
+      enabled: ${RERANK_ENABLED:false} # 精排开关（.env: RERANK_ENABLED）；关闭时检索照常，只是不精排
+      endpoint: ${QOORAG_RERANK_ENDPOINT:}  # 百炼 rerank 专属域名（MAAS 工作空间），需填入真实业务空间 ID
+      api-key: ${RERANK_API_KEY:}   # 精排服务密钥；留空则回退到 EMBEDDING_API_KEY / 共享密钥。rerank 与 chat 常不同域，密钥也可能不同
+      top-n: ${RERANK_TOP_N:5}      # 精排后保留条数（保住召回的同时压低噪声、节省 token）
+      model: ${RERANK_MODEL:qwen3-vl-rerank}  # 百炼 rerank 模型（gte-rerank 已于 2026-05-30 下线，推荐 qwen3-rerank），默认复用 embedding 密钥
   # 异步入库（RAG-030）
   ingest:
     chunk-strategy: structure  # 分块策略：structure（结构感知，RAG-021）/ fixed（改造前固定长度）

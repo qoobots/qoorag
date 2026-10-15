@@ -200,9 +200,9 @@ public class EvalDatasetGenService {
         body.put("max_tokens", 500);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(config.getApiKey());
+        headers.setBearerAuth(config.getChatApiKey());
         ResponseEntity<Map> resp = restTemplate.postForEntity(
-                config.getBaseUrl() + "/chat/completions", new HttpEntity<>(body, headers), Map.class);
+                config.getChatBaseUrl() + "/chat/completions", new HttpEntity<>(body, headers), Map.class);
         Map<String, Object> respBody = resp.getBody();
         if (respBody == null) {
             return List.of();

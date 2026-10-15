@@ -71,10 +71,10 @@ public class ChatService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(config.getApiKey());
+        headers.setBearerAuth(config.getChatApiKey());
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
-        String url = config.getBaseUrl() + "/chat/completions";
+        String url = config.getChatBaseUrl() + "/chat/completions";
 
         // 3. 调用 LLM
         try {
