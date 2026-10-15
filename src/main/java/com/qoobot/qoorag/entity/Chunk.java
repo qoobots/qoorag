@@ -70,6 +70,14 @@ public class Chunk {
     @Column(name = "parent_chunk_id")
     private Long parentChunkId;
 
+    /**
+     * 上下文前缀（RAG-023 Contextual Chunking）：LLM 生成的"该块在原文中的位置与内容"说明。
+     * <p>拼在原文之前一起 embedding 与建词法索引，解决切块后 chunk"失忆"的问题。
+     * 未启用时为 null，检索与展示均退化为仅用 content。
+     */
+    @Column(name = "context_prefix", columnDefinition = "TEXT")
+    private String contextPrefix;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -99,6 +107,8 @@ public class Chunk {
     public void setTokenCount(Integer tokenCount) { this.tokenCount = tokenCount; }
     public Long getParentChunkId() { return parentChunkId; }
     public void setParentChunkId(Long parentChunkId) { this.parentChunkId = parentChunkId; }
+    public String getContextPrefix() { return contextPrefix; }
+    public void setContextPrefix(String contextPrefix) { this.contextPrefix = contextPrefix; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

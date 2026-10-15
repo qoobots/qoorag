@@ -19,8 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class IngestServiceChunkingTest {
 
-    /** chunkStrategy 默认 null → 走 structure 路径 */
-    private final IngestService service = new IngestService(null, null, null, null, null, null);
+    /** chunkStrategy 默认 null → 走 structure 路径；ContextualChunkService 传 null 不影响纯分块逻辑 */
+    private final IngestService service =
+            new IngestService(null, null, null, null, null, null, null);
 
     @Nested
     @DisplayName("RAG-021 结构感知分块")

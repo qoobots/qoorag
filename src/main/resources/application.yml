@@ -98,6 +98,15 @@ qoorag:
     chunk-strategy: structure  # 分块策略：structure（结构感知，RAG-021）/ fixed（改造前固定长度）
     workers: 2                 # 后台入库线程数；过大将同时压满 embedding API 与 DB
     queue-capacity: 100        # 内存队列容量；超出后由调用线程直接执行（不丢任务）
+    # Contextual Chunking（RAG-023）：为每个 chunk 生成"它在原文中的位置与内容"说明，
+    # 拼在原文前一起 embedding 与建词法索引。默认关闭——每 chunk 多一次 LLM 调用。
+    # 官方实测：仅 Contextual Embedding 使 top-20 检索失败率 -35%，叠加 Contextual BM25 -49%。
+    # 只影响离线入库，不增加在线延迟。开启后存量数据需调 POST /api/admin/contextual/rebuild。
+    contextual:
+      enabled: false           # 默认关闭：成本敏感，需显式开启
+      model: ""                # 生成前缀用的模型；留空复用 qoorag.bailian.chat-model（建议换轻量模型降本）
+      max-prefix-chars: 200    # 前缀最大字符数
+      temperature: 0.1         # 低温保证前缀稳定可复现
   # 评测闭环（RAG-000 / RAG-003）
   eval:
     judge-model: ""          # 生成端评估的 Judge 模型；留空则复用 qoorag.bailian.chat-model

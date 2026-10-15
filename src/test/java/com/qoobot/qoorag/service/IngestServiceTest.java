@@ -25,14 +25,18 @@ public class IngestServiceTest {
     @Mock VectorDataRepository vectorDataRepository;
     @Mock EmbeddingService embeddingService;
     @Mock ContentSafetyService contentSafety;
+    @Mock ContextualChunkService contextualChunkService;
 
     private IngestService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(contentSafety.checkText(any())).thenReturn(ContentSafetyService.Result.safe());
+        // Contextual Chunking 默认关闭：前缀为 null，embedding 文本即原文
+        lenient().when(contextualChunkService.isEnabled()).thenReturn(false);
+        lenient().when(contextualChunkService.embeddingText(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         service = new IngestService(documentRepository, chunkRepository, vectorDataRepository,
-                new DocumentParserService(), embeddingService, contentSafety);
+                new DocumentParserService(), embeddingService, contentSafety, contextualChunkService);
     }
 
     @Test

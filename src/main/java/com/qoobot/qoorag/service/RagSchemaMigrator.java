@@ -67,6 +67,35 @@ public class RagSchemaMigrator implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * 把 {@code context_prefix} 纳入 {@code tsv} 的生成表达式（RAG-023 的 Contextual BM25）。
+     * <p>
+     * PostgreSQL 不支持直接修改生成列的表达式，必须 DROP 后重新 ADD。因为
+     * {@code context_prefix} 对存量行为 NULL，{@code coalesce} 退化为仅 {@code content}，
+     * 所以<b>存量行的 tsv 值语义不变</b>，只是物理重写一次。
+     * <p>
+     * 该步骤带幂等保护：只有当表达式尚未引用 {@code context_prefix} 时才执行，
+     * 避免每次启动都重写大表。
+     */
+    private static final String SQL_TSV_INCLUDE_PREFIX = """
+            DO $$
+            DECLARE expr text;
+            BEGIN
+                SELECT pg_get_expr(d.adbin, d.adrelid) INTO expr
+                FROM pg_attrdef d JOIN pg_attribute a
+                  ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+                WHERE d.adrelid = 'chunk'::regclass AND a.attname = 'tsv';
+                IF expr IS NULL OR expr NOT LIKE '%context_prefix%' THEN
+                    EXECUTE 'ALTER TABLE chunk DROP COLUMN IF EXISTS tsv';
+                    EXECUTE 'ALTER TABLE chunk ADD COLUMN tsv tsvector '
+                            || 'GENERATED ALWAYS AS (qoorag_cjk_tsvector('
+                            || 'coalesce(context_prefix, '''') || '' '' || coalesce(content, ''''))) STORED';
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_chunk_tsv ON chunk USING gin (tsv)';
+                    RAISE NOTICE 'tsv 生成表达式已纳入 context_prefix';
+                END IF;
+            END $$;
+            """;
+
     public RagSchemaMigrator(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -86,6 +115,10 @@ public class RagSchemaMigrator implements ApplicationRunner {
                     GENERATED ALWAYS AS (qoorag_cjk_tsvector(content)) STORED;
                 CREATE INDEX IF NOT EXISTS idx_chunk_tsv ON chunk USING gin (tsv);
                 """);
+        step("chunk 上下文前缀列（RAG-023 Contextual Chunking）", """
+                ALTER TABLE chunk ADD COLUMN IF NOT EXISTS context_prefix TEXT;
+                """);
+        step("tsv 纳入 context_prefix（RAG-023：Contextual BM25）", SQL_TSV_INCLUDE_PREFIX);
         step("document 元数据列", """
                 ALTER TABLE document ADD COLUMN IF NOT EXISTS source_uri    VARCHAR(512);
                 ALTER TABLE document ADD COLUMN IF NOT EXISTS content_hash  VARCHAR(64);

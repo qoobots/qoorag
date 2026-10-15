@@ -52,19 +52,22 @@ public class IngestService {
     private final DocumentParserService parserService;
     private final EmbeddingService embeddingService;
     private final ContentSafetyService contentSafety;
+    private final ContextualChunkService contextualChunkService;
 
     public IngestService(DocumentRepository documentRepository,
                          ChunkRepository chunkRepository,
                          VectorDataRepository vectorDataRepository,
                          DocumentParserService parserService,
                          EmbeddingService embeddingService,
-                         ContentSafetyService contentSafety) {
+                         ContentSafetyService contentSafety,
+                         ContextualChunkService contextualChunkService) {
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.vectorDataRepository = vectorDataRepository;
         this.parserService = parserService;
         this.embeddingService = embeddingService;
         this.contentSafety = contentSafety;
+        this.contextualChunkService = contextualChunkService;
     }
 
     /**
@@ -136,17 +139,37 @@ public class IngestService {
             }
             report(progress, IngestTask.STAGE_CHUNK, 40);
 
-            // 4. 批量向量化
+            // 4. Contextual Chunking（RAG-023）：为每个块生成上下文前缀。
+            //    前缀同时进入 embedding 文本与 tsv 词法索引（Contextual BM25）。
+            //    未启用或生成失败时前缀为 null，退化为无前缀，行为与改造前一致。
+            List<String> contextPrefixes = null;
+            if (contextualChunkService.isEnabled()) {
+                contextPrefixes = new ArrayList<>(drafts.size());
+                int done = 0;
+                for (ChunkDraft d : drafts) {
+                    contextPrefixes.add(contextualChunkService.generatePrefix(
+                            d.content, doc.getDocTitle(), d.headingPath, d.chunkType));
+                    done++;
+                    if (done % 10 == 0 || done == drafts.size()) {
+                        report(progress, IngestTask.STAGE_CHUNK, 40 + (int) (10.0 * done / drafts.size()));
+                    }
+                }
+                long ok = contextPrefixes.stream().filter(java.util.Objects::nonNull).count();
+                log.info("Contextual Chunking 完成：{}/{} 个块生成了上下文前缀", ok, drafts.size());
+            }
+
+            // 5. 批量向量化（RAG-023：有前缀时 embedding 前缀 + 原文）
             List<String> chunkTexts = new ArrayList<>(drafts.size());
-            for (ChunkDraft d : drafts) {
-                chunkTexts.add(d.content);
+            for (int i = 0; i < drafts.size(); i++) {
+                String prefix = contextPrefixes == null ? null : contextPrefixes.get(i);
+                chunkTexts.add(contextualChunkService.embeddingText(drafts.get(i).content, prefix));
             }
             report(progress, IngestTask.STAGE_EMBED, 50);
             List<float[]> embeddings = Arrays.asList(embeddingService.embedBatch(chunkTexts));
             log.info("向量化完成：{} 条", embeddings.size());
             report(progress, IngestTask.STAGE_EMBED, 80);
 
-            // 5. 写入 Chunk + VectorData
+            // 6. 写入 Chunk + VectorData
             report(progress, IngestTask.STAGE_SAVE, 85);
             List<Chunk> chunks = new ArrayList<>();
             for (int i = 0; i < drafts.size(); i++) {
@@ -162,6 +185,9 @@ public class IngestService {
                 chunk.setCharEnd(d.charEnd);
                 chunk.setChunkType(d.chunkType);
                 chunk.setTokenCount(estimateTokens(d.content));
+                if (contextPrefixes != null) {
+                    chunk.setContextPrefix(contextPrefixes.get(i));
+                }
                 chunk.setCreatedAt(LocalDateTime.now());
                 chunks.add(chunk);
             }

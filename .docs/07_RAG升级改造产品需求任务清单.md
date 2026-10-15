@@ -28,21 +28,22 @@
 | | RAG-002 评测集版本化管理 | ✅ |
 | | RAG-003 生成端评估指标 | ✅ |
 | | RAG-004 CI 回归门禁 | ✅ |
-| **M2 质量跃迁** | RAG-023 Contextual Chunking | ❌ |
+| **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
 | **M3 体验与成本** | RAG-022/025/026/042/043/044/046、RAG-051~055 | ❌ |
 
-> **M1（P0）13 项全部完成**。M2 仅剩 RAG-023（Contextual Chunking）。
+> **P0（M1）13 项 + M2 全部完成。** 下一步建议：M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮），
+> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
 2. `ContextAssembler.reorder` 初版 U 型重排逻辑错误（最相关片段落在第 4 位），已改为「偶数位取头、奇数位取尾」的正确实现。
 3. 异步入库在 `@Transactional` 方法内直接 `executor.execute`，工作线程早于事务提交执行导致 `findById` 返回 null、任务被静默丢弃（且误删临时文件）。已改为注册 `afterCommit` 回调。
 
-**测试状态**：`mvn test` 共 162 个用例，新增 58 个纯逻辑单测（分块/元数据/上下文组装/Prompt 渲染/judge 解析/抽样/评测集生成）全绿；剩余 72 个 error 为**预存环境问题**（Maven 使用 JDK 25，Mockito inline mock maker 无法在该 JVM 修改类），与本次改动无关。
+**测试状态**：`mvn test` 共 173 个用例，新增 69 个纯逻辑单测（分块/元数据/上下文组装/Prompt 渲染/judge 解析/抽样/评测集生成/上下文前缀）全绿；剩余 72 个 error 为**预存环境问题**（Maven 使用 JDK 25，Mockito inline mock maker 无法在该 JVM 修改类），与本次改动无关。
 
-**端到端验证（真实 PostgreSQL + pgvector 0.7.4 + 真实启动）**：应用成功启动、8 项 schema 迁移全部生效、HNSW 索引就绪；上传返回 taskId 即时响应 → 后台执行 → 失败带明确原因 → 重试后 `retryCount` 递增并重新执行 → 重启恢复正确识别丢失的临时文件；评测集创建/导出/运行历史接口均返回正确结构。全链路已实测通过。
+**端到端验证（真实 PostgreSQL + pgvector 0.7.4 + 真实启动）**：应用成功启动、9 项 schema 迁移全部生效、HNSW 索引就绪；上传返回 taskId 即时响应 → 后台执行 → 失败带明确原因 → 重试后 `retryCount` 递增并重新执行 → 重启恢复正确识别丢失的临时文件；评测集创建/导出/运行历史接口均返回正确结构；Contextual BM25 实测：查询仅存在于前缀的词可命中原文完全没有该词的 chunk，且迁移重跑不重写表、存量无前缀行正常切词。全链路已实测通过。
 
 ---
 
@@ -322,7 +323,8 @@ flowchart TB
 | **RAG-021** | **结构感知切块** | **P0** ✅ | 8d | ① Markdown 按标题层级切分并保留 `heading_path`；② 表格/代码块/列表作为原子单元不被切断；③ 现有固定长度切块保留为 `fixed` 策略，新策略 `structure` 可配；④ 评测集上相对 `fixed` 的 Context Precision 提升 ≥ 5pp | RAG-020 | `IngestService.splitText()` |
 | | *实现说明* | | | | | 新增 `structure` 策略（默认）：原子块识别（围栏代码 / Markdown 表格 / 列表）绝不切断；标题按 1~6 级维护**层级路径**（同级/更浅标题会弹出更深层级，避免章节泄漏）；标题不单独成块，仅作为后续块的 `heading_path`；`char_start/char_end` 为原文真实偏移（逐行推进偏移量，修复了初版"块长累加"导致偏移错位的 bug）。改造前算法保留为 `fixed` 策略。新增 11 个单测全绿（`IngestServiceChunkingTest`）。**待办**：Context Precision 量化对比（依赖 RAG-000/001） |
 | **RAG-022** | **父子块（Small-to-Big）** | P1 | 8d | ① 建立子块（检索单元）与父块（生成单元）两级结构；② 检索命中子块后回填父块上下文送入 LLM；③ 评测集上 Faithfulness 或答案完整性人工评分提升 | RAG-020、RAG-021 | `chunk` 表、`RetrieveService` |
-| **RAG-023** | **Contextual Chunking（块级上下文增强）** | **P0** | 8d | ① 入库时用轻量 LLM 为每个 chunk 生成 50-100 字上下文描述，前置拼接到 embedding 文本与 BM25 文本；② 开关可按 KB 配置（默认关闭，成本敏感）；③ 支持 prompt caching / 批量调用降本；④ 评测集上开启后 Recall@5 提升 ≥ 5pp（对标 Anthropic -35% 失败率） | RAG-021、RAG-030 | 新增 `ContextualEnrichService` |
+| **RAG-023** | **Contextual Chunking（块级上下文增强）** | **P0** ✅ | 8d | ① 入库时用轻量 LLM 为每个 chunk 生成 50-100 字上下文描述，前置拼接到 embedding 文本与 BM25 文本；② 开关可按 KB 配置（默认关闭，成本敏感）；③ 支持 prompt caching / 批量调用降本；④ 评测集上开启后 Recall@5 提升 ≥ 5pp（对标 Anthropic -35% 失败率） | RAG-021、RAG-030 | 新增 `ContextualEnrichService` |
+| | *实现说明* | | | | | 新增 `chunk.context_prefix` 列 + `ContextualChunkService` + `ContextualRebuildService` + `ContextualRebuildController`。入库时（RAG-023 与 RAG-030 的异步任务天然衔接）为每个块生成前缀，**前缀同时进入 embedding 文本与 tsv 词法索引**（Anthropic 的 Contextual Embeddings + Contextual BM25 两路都做）。上下文来源用**文档标题 + 标题路径**（RAG-021 提供）而非整篇原文——prompt 更短、成本更低、定位信号更准。默认关闭（`qoorag.ingest.contextual.enabled=false`），生成失败静默降级为无前缀，不阻塞入库。存量数据通过 `POST /api/admin/contextual/rebuild` 异步重建（重新生成前缀 + **重新向量化**，只加前缀不重嵌等于没改）。`tsv` 生成列已改为纳入 `context_prefix`，且带幂等保护（表达式已含前缀则跳过，不重写大表）。已在真实库验证：查询仅存在于前缀的词（"科技公司"）可命中原文完全没有该词的 chunk；重跑迁移不重写表；存量无前缀行正常切词。**待办**：开启后按 RAG-000/004 量化 Recall@5 提升幅度 |
 | **RAG-024** | **入库质量门禁** | P1 | 3d | ① 空块/超短块/重复块（内容哈希去重）自动丢弃并计数；② 解析文本为空时给出明确错误原因（区分"扫描件无文本层"/"加密"/"格式不支持"）；③ 入库报告含：chunk 数、丢弃数、耗时、embedding 用量 | RAG-020 | `IngestService` |
 | **RAG-025** | **DOCX / HTML 解析支持** | P1 | 8d | ① 支持 `.docx`（Apache POI）、`.html`（Jsoup，正文抽取+去噪）；② 现有 `.txt/.md/.pdf` 行为不变；③ 各格式解析单测覆盖率 ≥ 80% | — | `DocumentParserService`、`DocumentController.java:70` |
 | **RAG-026** | **PDF 表格结构化抽取** | **P1** | 13d | ① 表格识别为独立 `chunk_type=table`，转结构化表示（Markdown 表或 JSON）并保留表头/表标题；② 表格块不被字符切分切断；③ 表格类 query 的召回可用（给出 ≥10 条表格 query 的评测结果） | RAG-020、RAG-021 | `DocumentParserService` |
