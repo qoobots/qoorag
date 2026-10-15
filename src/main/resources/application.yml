@@ -98,6 +98,11 @@ qoorag:
     chunk-strategy: structure  # 分块策略：structure（结构感知，RAG-021）/ fixed（改造前固定长度）
     workers: 2                 # 后台入库线程数；过大将同时压满 embedding API 与 DB
     queue-capacity: 100        # 内存队列容量；超出后由调用线程直接执行（不丢任务）
+  # 评测闭环（RAG-000 / RAG-003）
+  eval:
+    judge-model: ""          # 生成端评估的 Judge 模型；留空则复用 qoorag.bailian.chat-model
+    sample-ratio: 0.3        # 生成端指标抽样比例 0~1；judge 调用有成本，不建议全量
+    max-judge-calls: 50      # 单次评测最大 judge 调用条数（成本保护）
   # 向量库索引参数（RAG-010）：HNSW ANN 索引由启动期 PgvectorIndexMigrator 幂等创建
   vector:
     hnsw:

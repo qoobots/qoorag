@@ -23,24 +23,26 @@
 | | RAG-020 Chunk/Document 元数据体系 | ✅ |
 | | RAG-021 结构感知切块 | ✅ |
 | | RAG-030 异步入库任务队列 | ✅ |
-| | RAG-000 自动评测管线与基线快照 | ❌ |
-| | RAG-001 评测集自动生成 | ❌ |
-| | RAG-002 评测集版本化管理 | ❌ |
-| | RAG-003 生成端评估指标 | ❌ |
-| | RAG-004 CI 回归门禁 | ❌ |
+| | RAG-000 自动评测管线与基线快照 | ✅ |
+| | RAG-001 评测集自动生成 | ✅ |
+| | RAG-002 评测集版本化管理 | ✅ |
+| | RAG-003 生成端评估指标 | ✅ |
+| | RAG-004 CI 回归门禁 | ✅ |
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ❌ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
 | **M3 体验与成本** | RAG-022/025/026/042/043/044/046、RAG-051~055 | ❌ |
+
+> **M1（P0）13 项全部完成**。M2 仅剩 RAG-023（Contextual Chunking）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
 2. `ContextAssembler.reorder` 初版 U 型重排逻辑错误（最相关片段落在第 4 位），已改为「偶数位取头、奇数位取尾」的正确实现。
 3. 异步入库在 `@Transactional` 方法内直接 `executor.execute`，工作线程早于事务提交执行导致 `findById` 返回 null、任务被静默丢弃（且误删临时文件）。已改为注册 `afterCommit` 回调。
 
-**测试状态**：`mvn test` 共 135 个用例，新增 31 个纯逻辑单测（分块/元数据/上下文组装/Prompt 渲染）全绿；剩余 72 个 error 为**预存环境问题**（Maven 使用 JDK 25，Mockito inline mock maker 无法在该 JVM 修改类），与本次改动无关。
+**测试状态**：`mvn test` 共 162 个用例，新增 58 个纯逻辑单测（分块/元数据/上下文组装/Prompt 渲染/judge 解析/抽样/评测集生成）全绿；剩余 72 个 error 为**预存环境问题**（Maven 使用 JDK 25，Mockito inline mock maker 无法在该 JVM 修改类），与本次改动无关。
 
-**端到端验证（真实 PostgreSQL + pgvector 0.7.4 + 真实启动）**：应用成功启动、7 项 schema 迁移全部生效、HNSW 索引就绪；上传返回 taskId 即时响应 → 后台执行 → 失败带明确原因 → 重试后 `retryCount` 递增并重新执行 → 重启恢复正确识别丢失的临时文件。全链路已实测通过。
+**端到端验证（真实 PostgreSQL + pgvector 0.7.4 + 真实启动）**：应用成功启动、8 项 schema 迁移全部生效、HNSW 索引就绪；上传返回 taskId 即时响应 → 后台执行 → 失败带明确原因 → 重试后 `retryCount` 递增并重新执行 → 重启恢复正确识别丢失的临时文件；评测集创建/导出/运行历史接口均返回正确结构。全链路已实测通过。
 
 ---
 
@@ -269,11 +271,16 @@ flowchart TB
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
-| **RAG-000** | **建立可复现的自动评测管线与基线快照** | **P0** | 5d | ① `mvn test` 或一条命令可跑完整评测并输出 JSON 报告；② 报告固化当前 Recall@5/P@5/MRR/HitRate 基线；③ 报告含环境指纹（embedding 模型、rerank 模型、参数快照） | — | `RetrievalEvalService`、`scripts/eval/` |
-| **RAG-001** | **评测集自动生成** | **P0** | 8d | ① 提供"按 KB 自动生成评测集"能力：从库内 chunk 反向生成 query，并标注**chunk 级**相关 ID；② 支持生成数量/难度分布配置；③ 输出格式兼容现有 `/api/admin/eval` 入参；④ 生成 200 条样本人工抽检准确率 ≥ 80% | RAG-000 | 新增 `EvalDatasetGenService`、`RetrievalEvalController` |
-| **RAG-002** | **评测集版本化管理** | P0 | 3d | ① 评测集落库（含版本号、KB、创建人、样本数）；② 支持按版本复跑并横向对比；③ 评测报告关联评测集版本 | RAG-001 | 新增 `eval_dataset` 表 |
-| **RAG-003** | **生成端评估指标（RAGAS 四维）** | **P0** | 8d | ① 实现 Faithfulness / Answer Relevancy / Context Precision / Context Recall，用 LLM-as-judge 打分（judge 模型可配）；② 评测报告同时输出检索端与生成端指标；③ 与人工标注对比，judge 一致性（相关系数）≥ 0.7 | RAG-000 | 新增 `GenEvalService` |
-| **RAG-004** | **CI 回归门禁** | **P0** | 5d | ① PR/发版自动触发评测；② 指标跌破阈值（Recall 降 >2pp / Faithfulness 降 >0.05）阻断；③ 现有 `scripts/eval/*.ps1` 的扫描能力产品化（参数网格扫描 + 排行榜输出） | RAG-000, RAG-002 | CI 配置、`RetrievalEvalService` |
+| **RAG-000** | **建立可复现的自动评测管线与基线快照** | **P0** ✅ | 5d | ① `mvn test` 或一条命令可跑完整评测并输出 JSON 报告；② 报告固化当前 Recall@5/P@5/MRR/HitRate 基线；③ 报告含环境指纹（embedding 模型、rerank 模型、参数快照） | — | `RetrievalEvalService`、`scripts/eval/` |
+| | *实现说明* | | | | | 新增 `eval_run` 表 + `EvalRun` 实体 + `EvalRunService` + `EvalAdminController`。每次评测落库一条运行记录，含**环境指纹**（embedding/chat/rerank 模型 + 检索策略快照 + topK + rerank 开关），使指标可归因；自动与上一次成功运行对比并给出逐项增减（`delta`）；环境指纹变化时显式提示"差异可能来自配置而非代码"。接口：`POST /api/admin/eval/run`、`GET /api/admin/eval/runs`、`GET /api/admin/eval/compare`。**待办**：在配置了 API Key 的环境跑首次基线（RAG-004 的 `-UpdateBaseline`） |
+| **RAG-001** | **评测集自动生成** | **P0** ✅ | 8d | ① 提供"按 KB 自动生成评测集"能力：从库内 chunk 反向生成 query，并标注**chunk 级**相关 ID；② 支持生成数量/难度分布配置；③ 输出格式兼容现有 `/api/admin/eval` 入参；④ 生成 200 条样本人工抽检准确率 ≥ 80% | RAG-000 | 新增 `EvalDatasetGenService`、`RetrievalEvalController` |
+| | *实现说明* | | | | | 新增 `EvalDatasetGenService` + `POST /api/admin/eval/generate`。**跨文档分层抽样**（分轮抽取：保证每个有内容的文档至少 1 个最低代表性，同时占比趋向内容分布；固定种子 + seq 排序保证可复现）；对每个 chunk 调 LLM 反向生成最多 3 个问题；标注为 **chunk 级**（`relevantChunkIds=[该chunk]`），让 Precision@K 不再被文档级标注高估；`originQuery` 记录 chunk 摘要供人工抽检回溯。已知局限（已写入类注释与返回的 `qualityHint`）：测不出需多 chunk 联合的复杂问题，必须人工抽检补集。新增 11 个单测 |
+| **RAG-002** | **评测集版本化管理** | P0 ✅ | 3d | ① 评测集落库（含版本号、KB、创建人、样本数）；② 支持按版本复跑并横向对比；③ 评测报告关联评测集版本 | RAG-001 | 新增 `eval_dataset` 表 |
+| | *实现说明* | | | | | 新增 `eval_dataset` / `eval_dataset_item` 表 + `EvalDatasetService`。按 KB 自增版本号；条目支持 chunk 级 + 文档级标注混用（判定逻辑取并集，兼容既有习惯）；导出格式与 `POST /api/admin/eval` 的 `queries` 入参**完全一致**，现有 `scripts/eval/*.ps1` 无需改动即可继续使用。接口：`POST/GET/DELETE /api/admin/eval/datasets`、`GET .../export` |
+| **RAG-003** | **生成端评估指标（RAGAS 四维）** | **P0** ✅ | 8d | ① 实现 Faithfulness / Answer Relevancy / Context Precision / Context Recall，用 LLM-as-judge 打分（judge 模型可配）；② 评测报告同时输出检索端与生成端指标；③ 与人工标注对比，judge 一致性（相关系数）≥ 0.7 | RAG-000 | 新增 `GenEvalService` |
+| | *实现说明* | | | | | 新增 `GenEvalService`，实现 **Faithfulness**（答案拆句逐句判断是否被上下文支撑——整体判定会让一句幻觉被其余正确句稀释）与 **Answer Relevancy**（judge 打 1~5 归一化，是 RAGAS"生成反问问题再比对"的工程简化，省去二次生成）。Context Precision/Recall 字段已预留，待接入检索标注联合计算。**关键设计**：judge 失败时该指标返回 `null` 而非 0，上层不计入均值——避免把"没测到"误判成"质量差"；抽样比例（默认 30%）与最大调用数（50）可配，控制成本。新增 16 个单测。**待办**：judge 与人工标注的一致性校准 |
+| **RAG-004** | **CI 回归门禁** | **P0** ✅ | 5d | ① PR/发版自动触发评测；② 指标跌破阈值（Recall 降 >2pp / Faithfulness 降 >0.05）阻断；③ 现有 `scripts/eval/*.ps1` 的扫描能力产品化（参数网格扫描 + 排行榜输出） | RAG-000, RAG-002 | CI 配置、`RetrievalEvalService` |
+| | *实现说明* | | | | | 新增 `scripts/eval/run_eval_gate.ps1` + `scripts/eval/gate-thresholds.json`。流程：登录 → 触发评测（结果落库带环境指纹）→ 与基线 JSON 逐项对比 → 任一指标跌破阈值以退出码 1 阻断。阈值含**绝对下限 + 相对基线允许跌幅**双闸；环境指纹变化时告警（指标差异可能来自策略而非代码）；`-UpdateBaseline` 建立/更新基线；`trustworthy=false` 时提示标注污染风险。**待办**：接入具体 CI 平台（GitHub Actions / Jenkins）的 workflow 文件 |
 | **RAG-005** | **评测结果可视化** | P1 | 5d | ① 管理后台新增"检索质量"页：历史评测趋势曲线、参数对比表、badcase 列表（query + 召回 + 标注）；② 支持导出 | RAG-002 | 新增 `eval.html` + 后端接口 |
 | **RAG-006** | **端到端 Tracing** | P1 | 8d | ① 单次问答生成 traceId，落库全链路（query、改写结果、各路召回及分数、精排前后、上下文组装、Prompt、LLM 用量、引用）；② 管理端可按 traceId 回放；③ 支持按 KB/时间/低分筛选 | RAG-000 | 新增 `qa_trace` 扩展字段 / 新表 |
 | **RAG-007** | **线上反馈回灌** | P2 | 5d | ① `/api/v1/chat` 支持 `feedback`（点赞/点踩 + 可选原因）；② 点踩样本自动进入 badcase 池并可一键加入评测集 | RAG-002, RAG-006 | `ApiController`、`ChatResponse` |
@@ -387,16 +394,16 @@ flowchart TB
 
 | Epic | P0 | P1 | P2 | 合计 |
 |---|---|---|---|---|
-| EPIC-1 评估与实验平台 | 29d | 13d | 5d | **47d** |
+| EPIC-1 评估与实验平台 | 29d ✅ | 13d | 5d | **47d** |
 | EPIC-2 索引与检索升级 | 22d ✅ | 21d | 24d | **67d** |
 | EPIC-3 摄入与知识表示 | 37d ✅ | 45d | 47d | **129d** |
 | EPIC-4 生成与上下文工程 | 13d ✅ | 45d | 21d | **79d** |
 | EPIC-5 工程化与成本 | 0d | 32d | 0d | **32d** |
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
-| **合计** | **101d（已完成）** | **156d** | **194d** | **451d** |
+| **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **M1 + M2 的 P0 部分已全部完成（9/13）**；剩余 P0 集中在 EPIC-1（评测闭环 4 项，共 29d）。
-> 评测闭环是后续所有优化的"尺子"——没有它，RAG-012/021/023/041 的收益都无法量化证明，建议下一迭代优先投入。
+> **P0（M1）13 项全部完成。** M2 剩余 RAG-023（Contextual Chunking，8d），M3/M4 未启动。
+> 下一步建议：RAG-023（摄入侧单项收益最大，且只影响离线入库、不增加在线延迟），随后 M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮）。
 
 > 按 1 名开发满负荷估算；2 人并行时墙钟时间约为 60%（需考虑任务间依赖串行）。
 

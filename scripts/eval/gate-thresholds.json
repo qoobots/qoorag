@@ -1,0 +1,9 @@
+{
+  "_comment": "RAG 评测回归门禁阈值（RAG-004）。maxDrop = 相对基线允许的最大跌幅；min = 绝对下限。首次接入请先用 -UpdateBaseline 建立基线。",
+  "recallAtK":       { "maxDrop": 0.02, "min": 0.60 },
+  "precisionAtK":    { "maxDrop": 0.05, "min": 0.40 },
+  "hitRate":         { "maxDrop": 0.02, "min": 0.70 },
+  "mrr":             { "maxDrop": 0.05, "min": 0.50 },
+  "faithfulness":    { "maxDrop": 0.05, "min": 0.75 },
+  "answerRelevancy": { "maxDrop": 0.05, "min": 0.60 }
+}

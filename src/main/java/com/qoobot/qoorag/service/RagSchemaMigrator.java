@@ -160,6 +160,38 @@ public class RagSchemaMigrator implements ApplicationRunner {
         step("qa_trace 全链路 trace 列", """
                 ALTER TABLE qa_trace ADD COLUMN IF NOT EXISTS trace_json TEXT;
                 """);
+        step("eval_run 评测运行记录表", """
+                CREATE TABLE IF NOT EXISTS eval_run (
+                    id                 BIGSERIAL PRIMARY KEY,
+                    dataset_id         BIGINT,
+                    kb_id              BIGINT NOT NULL,
+                    tenant_id          BIGINT NOT NULL,
+                    status             VARCHAR(64) NOT NULL DEFAULT 'SUCCESS',
+                    top_k              INT,
+                    recall_at_k        DOUBLE PRECISION,
+                    precision_at_k     DOUBLE PRECISION,
+                    hit_rate           DOUBLE PRECISION,
+                    mrr                DOUBLE PRECISION,
+                    faithfulness       DOUBLE PRECISION,
+                    answer_relevancy   DOUBLE PRECISION,
+                    context_precision  DOUBLE PRECISION,
+                    context_recall     DOUBLE PRECISION,
+                    item_count         INT,
+                    loop_suspected_count INT,
+                    trustworthy        BOOLEAN,
+                    embedding_model    VARCHAR(128),
+                    chat_model         VARCHAR(128),
+                    rerank_model       VARCHAR(128),
+                    rerank_enabled     BOOLEAN,
+                    strategy_snapshot  VARCHAR(512),
+                    notes              TEXT,
+                    duration_ms        BIGINT,
+                    created_by         BIGINT,
+                    created_at         TIMESTAMP DEFAULT now()
+                );
+                CREATE INDEX IF NOT EXISTS idx_eval_run_kb ON eval_run(kb_id, tenant_id);
+                CREATE INDEX IF NOT EXISTS idx_eval_run_dataset ON eval_run(dataset_id);
+                """);
     }
 
     /** 单步执行，失败只告警不阻断启动 */
