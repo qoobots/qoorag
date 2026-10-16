@@ -65,6 +65,7 @@ qoorag:
   embedding:
     cache-enabled: true          # 按 sha256(text|model) 缓存 embedding，重复文档/query 命中跳过外部 API
     cache-ttl-minutes: 1440      # 缓存留存时长（分钟）
+    concurrency: 4               # RAG-052：并发 API 调用数（并行多个批次，提升入库吞吐；批量大小见 BailianConfig.embeddingBatchSize）
   # 内容安全（#18）：默认关闭；开启需配置阿里云密钥。关闭或异常时 fail-open 放行。
   content-safety:
     enabled: ${CONTENT_SAFETY_ENABLED:false}

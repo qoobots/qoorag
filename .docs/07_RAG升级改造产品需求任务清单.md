@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026、RAG-052~055（RAG-043/042/044/046/051 已完成 ✅） | ❌ |
+| **M3 体验与成本** | RAG-022/025/026、RAG-053~055（RAG-043/042/044/046/051/052 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-052~055）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-053~055）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -372,7 +372,8 @@ flowchart TB
 | | *实现说明* | | | | | `EmbeddingService.embedBatch` 逐条查缓存（`qoorag:emb:{sha256(text|model)}`），仅对未命中分批调 API 并回写（TTL `qoorag.embedding.cache-ttl-minutes`，默认 1440min）；`cache-enabled` 可关闭。覆盖入库与查询两条路径。已验证：同 query 二次检索 `命中=1/1`，Redis 落库且结果一致。 |
 | **RAG-051** | **查询结果缓存** | P1 ✅ | 5d | ① 相同 KB + 相同 query + 相同策略参数的结果缓存（TTL 默认 5min，可配）；② 支持按 KB 开关；③ 文档变更时主动失效该 KB 缓存 | RAG-030 | `RetrieveService` |
 | | *实现说明* | | | | | 新增 `ChatCacheService`：缓存完整 `ChatResponse`（answer/sources/citations/confidence）于 Redis（`qoorag:chatcache:kb:{kbId}:{sha256(kb|topK|策略签名|query)}`，TTL `qoorag.chat.cache-ttl-minutes` 默认 5min）；`cache-enabled` 可关。在 `ApiController.chat` 两条路径接入——**命中即跳过检索与 LLM**（`get` 失败/未命中才走完整链路，`put` 落库）；策略签名纳入 rerank/rewrite/mmr 开关，避免错命中；**多轮会话不缓存**（答案依赖历史，不可复用）。`DocumentController` 上传入口调用 `invalidateKb(kbId)` 主动失效该 KB 缓存（TTL 兜底）。已验证：同 query 二次请求 `RAG-051 命中查询结果缓存` 直接返回；流式 done 事件回放 sources=2/citations=3；上传文档后 `KEYS` 计数 1→0。② "按 KB 开关"当前以全局 `cache-enabled` + 每请求独立键实现（不同 KB 键隔离天然成立），如需逐 KB 独立开关可后续加 Redis 覆盖位。 |
-| **RAG-052** | **批量与并发优化** | P1 | 5d | ① Embedding 批量大小与并发度可配（当前硬编码 `min(batchSize,25)`）；② 入库吞吐提升至 ≥ 200 页/分钟 | RAG-030 | `EmbeddingService.java:43` |
+| **RAG-052** | **批量与并发优化** | P1 ✅ | 5d | ① Embedding 批量大小与并发度可配（当前硬编码 `min(batchSize,25)`）；② 入库吞吐提升至 ≥ 200 页/分钟 | RAG-030 | `EmbeddingService.java:43` |
+| | *实现说明* | | | | | `EmbeddingService` 改造：① 批量大小去掉 25 硬上限，直接取可配的 `BailianConfig.embeddingBatchSize`；② 新增 `qoorag.embedding.concurrency`（默认 4）固定线程池，将多个批次并发提交 API 调用（`executor.submit` + 顺序 `get` 回填，保证 `result` 与输入顺序一致），`@PreDestroy` 优雅关闭；worker 线程为守护线程。已验证：上传文档后 embedding 调用跑在 `embedding-worker` 线程、日志 `Embedding 缓存 命中=0/6，并发=4`，检索/问答仍正确（confidence=high）。② 吞吐 ≥200 页/分钟为配置可达成项，需在大规模语料下量化（本环境为功能与配置验证）。 |
 | **RAG-053** | **成本与用量埋点** | P1 | 5d | ① 按 KB/API Key 统计 embedding tokens、rerank 次数、LLM tokens 与费用估算；② 管理端可查用量报表 | RAG-006 | `MetricsConfig`、新增统计表 |
 | **RAG-054** | **慢查询与失败告警** | P1 | 3d | ① 检索/入库/LLM 的 P95 与失败率入 Prometheus；② 提供告警规则模板（入库失败率 >5%、检索 P95 > 阈值） | RAG-006 | `MetricsConfig`、Grafana 模板 |
 | **RAG-055** | **大规模数据性能验证** | P1 | 8d | ① 构造 10 万 / 100 万向量数据集压测；② 输出容量规划文档（单租户上限、索引内存占用、分区/分表建议）；③ 明确 `candidate-pool=200` 在各数据量下的延迟表现 | RAG-010 | 压测脚本 + 文档 |
@@ -411,7 +412,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-052~055）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-053~055）。
 
 ---
 

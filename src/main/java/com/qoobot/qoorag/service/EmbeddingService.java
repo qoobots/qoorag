@@ -3,6 +3,7 @@ package com.qoobot.qoorag.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qoobot.qoorag.config.BailianConfig;
 import com.qoobot.qoorag.common.HttpRetryUtil;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 
 /**
  * 向量化服务：调用百炼 Embedding API（OpenAI 兼容模式）
@@ -22,6 +24,9 @@ import java.util.*;
  * <p>
  * RAG-050：按 {@code sha256(text|model)} 对 embedding 结果做 Redis 缓存（TTL 可配），
  * 相同文本（重复文档入库 / 相同 query）直接命中，跳过外部 API 调用，降本且提速。
+ * <p>
+ * RAG-052：批量大小与并发度可配。批量大小取自 {@code BailianConfig.embeddingBatchSize}（不再硬限 25）；
+ * 多个批次通过固定大小线程池并发调用 API（{@code qoorag.embedding.concurrency}），提升入库吞吐。
  */
 @Service
 public class EmbeddingService {
@@ -35,17 +40,28 @@ public class EmbeddingService {
     private final org.springframework.data.redis.core.StringRedisTemplate redis;
     private final boolean cacheEnabled;
     private final Duration cacheTtl;
+    private final int concurrency;
+    private final ExecutorService executor;
 
     public EmbeddingService(RestTemplate restTemplate,
                             BailianConfig config,
                             org.springframework.data.redis.core.StringRedisTemplate redis,
                             @Value("${qoorag.embedding.cache-enabled:true}") boolean cacheEnabled,
-                            @Value("${qoorag.embedding.cache-ttl-minutes:1440}") int cacheTtlMinutes) {
+                            @Value("${qoorag.embedding.cache-ttl-minutes:1440}") int cacheTtlMinutes,
+                            @Value("${qoorag.embedding.concurrency:4}") int concurrency) {
         this.restTemplate = restTemplate;
         this.config = config;
         this.redis = redis;
         this.cacheEnabled = cacheEnabled;
         this.cacheTtl = Duration.ofMinutes(cacheTtlMinutes);
+        this.concurrency = Math.max(1, concurrency);
+        // RAG-052：并发 API 调用线程池（与 embedding 调用并发度一致）
+        this.executor = Executors.newFixedThreadPool(this.concurrency,
+                r -> {
+                    Thread t = new Thread(r, "embedding-worker");
+                    t.setDaemon(true);
+                    return t;
+                });
     }
 
     /** 单文本向量化 */
@@ -55,7 +71,7 @@ public class EmbeddingService {
     }
 
     /**
-     * 批量向量化（一次 API 调用），自动按 batchSize 分批。
+     * 批量向量化（按批次并发调用 API），自动按 batchSize 分批。
      * RAG-050：先逐条查缓存，仅对未命中部分调用 API，命中结果写回缓存。
      */
     public float[][] embedBatch(List<String> texts) {
@@ -80,32 +96,49 @@ public class EmbeddingService {
         }
 
         if (!missIdx.isEmpty()) {
-            int batchSize = Math.min(config.getEmbeddingBatchSize(), 25);
-            List<float[]> missVectors = new ArrayList<>();
+            int batchSize = Math.max(1, config.getEmbeddingBatchSize());
+            // 切分为批次（顺序保持与 missIdx 一致）
+            List<List<String>> batches = new ArrayList<>();
             for (int s = 0; s < missIdx.size(); s += batchSize) {
                 int e = Math.min(s + batchSize, missIdx.size());
                 List<String> batch = new ArrayList<>();
                 for (int k = s; k < e; k++) {
                     batch.add(texts.get(missIdx.get(k)));
                 }
-                float[][] vecs = callApi(batch, model);
-                for (float[] v : vecs) {
-                    missVectors.add(v);
-                }
+                batches.add(batch);
             }
-            // 回填结果数组并写缓存
-            for (int k = 0; k < missIdx.size(); k++) {
-                int idx = missIdx.get(k);
-                float[] v = missVectors.get(k);
-                result[idx] = v;
-                if (cacheEnabled) {
-                    putToCache(texts.get(idx), model, v);
+
+            // RAG-052：并发提交各批次 API 调用（callApi 返回 float[][]，每批多向量）
+            List<Future<float[][]>> futures = new ArrayList<>(batches.size());
+            for (List<String> batch : batches) {
+                futures.add(executor.submit(() -> callApi(batch, model)));
+            }
+
+            // 顺序回填（futures 与 missIdx 一一对应），保证 result 与输入顺序一致
+            int pos = 0;
+            for (int b = 0; b < batches.size(); b++) {
+                float[][] vecs;
+                try {
+                    vecs = futures.get(b).get();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Embedding 并发调用被中断", ie);
+                } catch (ExecutionException ee) {
+                    throw new RuntimeException("Embedding 批量调用失败: " + ee.getMessage(), ee);
                 }
+                for (int j = 0; j < vecs.length; j++) {
+                    int idx = missIdx.get(pos + j);
+                    result[idx] = vecs[j];
+                    if (cacheEnabled) {
+                        putToCache(texts.get(idx), model, vecs[j]);
+                    }
+                }
+                pos += vecs.length;
             }
         }
 
         if (cacheEnabled) {
-            log.info("Embedding 缓存 命中={}/{}", hits, n);
+            log.info("Embedding 缓存 命中={}/{}，并发={}", hits, n, concurrency);
         }
         return result;
     }
@@ -192,6 +225,16 @@ public class EmbeddingService {
             return sb.toString();
         } catch (Exception e) {
             return String.valueOf(s.hashCode());
+        }
+    }
+
+    /** 优雅关闭并发线程池（RAG-052） */
+    @PreDestroy
+    public void destroy() {
+        try {
+            executor.shutdownNow();
+        } catch (Exception ignored) {
+            // 忽略关闭异常
         }
     }
 }
