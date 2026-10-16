@@ -9,6 +9,7 @@ import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
+import com.qoobot.qoorag.service.ChatHistoryService;
 import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.ContextAssembler;
 import com.qoobot.qoorag.service.RerankService;
@@ -44,6 +45,7 @@ public class ApiController {
     private final ContextAssembler contextAssembler;
     private final MetricsConfig.RagMetrics ragMetrics;
     private final AuditService auditService;
+    private final ChatHistoryService historyService;
 
     /** RAG-043 流式问答专用线程池（守护线程，避免阻塞请求线程；CallerRuns 兜底防丢任务） */
     private final ExecutorService streamExecutor = new ThreadPoolExecutor(
@@ -62,7 +64,8 @@ public class ApiController {
                          RerankService rerankService,
                          ContextAssembler contextAssembler,
                          MetricsConfig.RagMetrics ragMetrics,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         ChatHistoryService historyService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
@@ -70,6 +73,7 @@ public class ApiController {
         this.contextAssembler = contextAssembler;
         this.ragMetrics = ragMetrics;
         this.auditService = auditService;
+        this.historyService = historyService;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -122,8 +126,17 @@ public class ApiController {
         final Long reqTenantId = ctx == null ? null : ctx.getTenantId();
         final Long reqActor = actorOf(ctx);
 
+        // RAG-044：多轮会话上下文 — 在请求线程解析历史与指代消解（historyService 不依赖 ThreadLocal）
+        final String reqSessionId = (body.get("sessionId") instanceof String s && !s.isBlank()) ? s : null;
+        final List<ChatHistoryService.Turn> history =
+                reqSessionId != null ? historyService.getHistory(reqSessionId) : List.of();
+        final String reqHistoryText = history.isEmpty() ? "" : formatHistory(history);
+        // 检索使用指代消解后的独立 query；首轮或历史为空时退化为原 query
+        final String reqEffectiveQuery =
+                (reqSessionId != null && !history.isEmpty()) ? chatService.resolveQuery(query, reqHistoryText) : query;
+
         if (!stream) {
-            return chatSync(query, topK, ctx);
+            return chatSync(query, topK, ctx, reqEffectiveQuery, reqHistoryText, reqSessionId);
         }
 
         // ===== RAG-043 流式路径 =====
@@ -133,14 +146,14 @@ public class ApiController {
             try {
                 int retrieveTopK = rerankService.isEnabled()
                         ? Math.max(topK, rerankService.getTopN() * 4) : topK;
-                List<RetrieveChunk> chunks = retrieveService.retrieve(query, retrieveTopK, reqKbId, reqTenantId);
-                chunks = rerankService.rerank(query, chunks);
+                List<RetrieveChunk> chunks = retrieveService.retrieve(reqEffectiveQuery, retrieveTopK, reqKbId, reqTenantId);
+                chunks = rerankService.rerank(reqEffectiveQuery, chunks);
                 ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
                 List<RetrieveChunk> usedChunks = assembled.used();
 
                 StringBuilder answerBuf = new StringBuilder();
                 ChatService.StreamChatResult sr = chatService.streamChat(
-                        query, assembled.promptContext(), reqKbId,
+                        query, assembled.promptContext(), reqKbId, reqHistoryText,
                         token -> { answerBuf.append(token); sendSse(emitter, "token", "token", token); },
                         reasoning -> sendSse(emitter, "reasoning", "reasoning", reasoning));
 
@@ -157,6 +170,10 @@ public class ApiController {
                 done.put("citations", chatResp.getCitations());
                 emitter.send(SseEmitter.event().name("done").data(done));
                 emitter.complete();
+                // RAG-044：持久化本轮对话到会话历史（即使后续留痕失败也不影响多轮）
+                if (reqSessionId != null) {
+                    historyService.append(reqSessionId, query, answerBuf.toString());
+                }
 
                 // 留痕（与同步路径一致）
                 QaTrace trace = new QaTrace();
@@ -193,24 +210,25 @@ public class ApiController {
         return emitter;
     }
 
-    /** 同步问答（非流式），行为与原实现完全一致，供回归保证 */
-    private Result chatSync(String query, int topK, SessionInfo ctx) {
+    /** 同步问答（非流式），行为与原实现一致，并支持 RAG-044 多轮会话上下文 */
+    private Result chatSync(String query, int topK, SessionInfo ctx,
+                            String effectiveQuery, String historyText, String sessionId) {
         long start = System.currentTimeMillis();
         try {
-            // 1. 检索召回（宽召回：hybrid + 大候选池，保证高 Recall）
+            // 1. 检索召回（宽召回：hybrid + 大候选池，保证高 Recall）；多轮时用指代消解后的独立 query
             int retrieveTopK = rerankService.isEnabled()
                     ? Math.max(topK, rerankService.getTopN() * 4)
                     : topK;
-            List<RetrieveChunk> chunks = retrieveService.retrieve(query, retrieveTopK, ctx.getKbId(), ctx.getTenantId());
+            List<RetrieveChunk> chunks = retrieveService.retrieve(effectiveQuery, retrieveTopK, ctx.getKbId(), ctx.getTenantId());
 
             // 1.5. 精排
-            chunks = rerankService.rerank(query, chunks);
+            chunks = rerankService.rerank(effectiveQuery, chunks);
 
             // 2. 上下文组装（RAG-041）
             ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
 
-            // 3. 调 LLM 生成回答（Prompt 模板外置，RAG-040）
-            Map<String, Object> llmResult = chatService.chat(query, assembled.promptContext(), kbIdOf(ctx));
+            // 3. 调 LLM 生成回答（Prompt 模板外置，RAG-040）；historyText 注入多轮上下文
+            Map<String, Object> llmResult = chatService.chat(query, assembled.promptContext(), kbIdOf(ctx), historyText);
             String answer = (String) llmResult.get("answer");
             String model = (String) llmResult.get("model");
             @SuppressWarnings("unchecked")
@@ -224,6 +242,11 @@ public class ApiController {
                     (int) usageMap.get("completionTokens"),
                     usedChunks
             );
+
+            // RAG-044：持久化本轮对话到会话历史
+            if (sessionId != null) {
+                historyService.append(sessionId, query, answer);
+            }
 
             // 5. 问答留痕
             QaTrace trace = new QaTrace();
@@ -259,6 +282,15 @@ public class ApiController {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** RAG-044：将历史轮次格式化为可读文本（供指代消解与 LLM 上下文注入） */
+    private static String formatHistory(List<ChatHistoryService.Turn> history) {
+        StringBuilder sb = new StringBuilder();
+        for (ChatHistoryService.Turn t : history) {
+            sb.append("user".equals(t.role()) ? "用户：" : "助手：").append(t.content()).append("\n");
+        }
+        return sb.toString().strip();
     }
 
     /** KB ID：供 Prompt 模板按 KB 选择（API Key 调用时来自 Key 绑定） */

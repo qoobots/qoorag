@@ -51,6 +51,11 @@ qoorag:
     session-ttl-minutes: 120
     # 审计日志留存期（天），超过则定时物理清理；默认 180 天（6 个月，#18）
     audit-retention-days: 180
+  # 多轮对话（RAG-044）
+  chat:
+    session:
+      max-turns: 10          # 会话历史保留的最大轮数（每轮=用户提问+助手回答）
+      ttl-minutes: 1440      # 会话历史 Redis 留存时长（分钟），过期自动清理
   # 内容安全（#18）：默认关闭；开启需配置阿里云密钥。关闭或异常时 fail-open 放行。
   content-safety:
     enabled: ${CONTENT_SAFETY_ENABLED:false}

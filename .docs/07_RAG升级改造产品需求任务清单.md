@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026/044/046、RAG-051~055（RAG-043/042 已完成 ✅） | ❌ |
+| **M3 体验与成本** | RAG-022/025/026/046、RAG-051~055（RAG-043/042/044 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042 已完成。** 下一步建议：M3 其余体验项（RAG-044 多轮），
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026/046），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 **顺带修复的预存缺陷**：
@@ -351,7 +351,8 @@ flowchart TB
 | | *实现说明* | | | | | 后端落地：① 修复 `ContextAssembler` 让 `used` 与 prompt【参考资料 N】编号同序（否则 answer 的 [n] 会错指到 sources 错误位置）；② `ChatResponse.SourceInfo` 扩展 `documentName/headingPath/pageNo/chunkType` 元数据（来自 RAG-020）；③ 新增 `Citation`（句子级归因）与 `parseCitations`：按句切分、提取 `[n]`/`【n】` 标记并映射到 `used[n-1].chunkId`/`documentId`；④ 强化默认 Prompt 引用格式约束（句末 `[n]`）；⑤ 流式 `done` 事件与同步响应均携带 `sources`+`citations`。已验证：3 条句子级引用正确映射 chunkId=2，sources 含标题/类型/分数。③ 前端可点击跳转由 `playground.html` 消费（后端数据已就绪）。 |
 | **RAG-043** | **流式输出（SSE）** | P1 ✅ | 8d | ① `/api/v1/chat` 支持 `stream=true`，SSE 增量返回；② 结束后推送 sources 与 usage 事件；③ 非流式行为保持不变（兼容）；④ 首字延迟 ≤ 1.5s（P95） | RAG-041 | `ApiController`、`ChatService` |
 | | *实现说明* | | | | | `ApiController.chat` 按 `stream:true` 分支返回 `SseEmitter`：后台线程执行 检索→精排→上下文组装→流式 LLM，逐帧推送 `event:reasoning`（推理模型思考）/ `event:token`（答案 token），结束帧 `event:done` 携带 sources+usage+完整 answer；非流式路径（`chatSync`）保持原 `Result` 返回不变（回归已验证）。流式读取用 Java 17 内置 `java.net.http.HttpClient` 消费 SSE，无需引入 WebFlux；专用守护线程池 `streamExecutor` 避免阻塞请求线程。已端到端验证：reasoning 84 帧 + token 18 帧 + done 事件（含引用 [1] 与 sources）。 |
-| **RAG-044** | **多轮对话与指代消解** | P1 | 13d | ① 支持 `sessionId` 携带历史（最近 N 轮，可配）；② 追问类 query 先做指代消解再检索；③ 历史过长时自动压缩；④ 提供会话历史存储与 TTL 清理 | RAG-015 | 新增 `ChatSession` 实体、`ApiController` |
+| **RAG-044** | **多轮对话与指代消解** | P1 ✅ | 13d | ① 支持 `sessionId` 携带历史（最近 N 轮，可配）；② 追问类 query 先做指代消解再检索；③ 历史过长时自动压缩；④ 提供会话历史存储与 TTL 清理 | RAG-015 | 新增 `ChatSession` 实体、`ApiController` |
+| | *实现说明* | | | | | 后端落地：① `ApiController.chat` 支持 `sessionId`，请求线程内加载历史（`ChatHistoryService`）并调用 `ChatService.resolveQuery` 做 LLM 指代消解，检索使用消解后的独立 query、LLM 上下文注入历史；② 新增 `ChatHistoryService`（Redis 存储最近 N 轮，`qoorag.chat.session.max-turns`/`ttl-minutes` 可配，TTL 自动清理，无需定时任务）；③ `ChatService` 增加 `complete`（轻量纯 LLM 补全）、`resolveQuery`（指代消解）、`buildUserContent`（历史注入）及 `chat/streamChat` 的历史重载；④ 同步/流式两条路径均在答后回写历史。已验证：两轮对话中追问"它有哪些核心产品"被正确消解指向量子科技并检索到核心产品；Redis 落库 2 轮 4 条记录。③ 历史压缩沿用 max-turns 滑动窗口截断，未单独引入摘要压缩（如需语义压缩可后续增强）。 |
 | **RAG-045** | **LLM 调用超时/重试/降级** | P1 | 3d | ① Chat 调用接入 `HttpRetryUtil`（对齐 Embedding/Rerank 现有做法）与可配超时；② 失败时明确错误码与可重试标记；③ 记录重试次数到 trace | RAG-006 | `ChatService.java:90` |
 | **RAG-046** | **拒答与置信度表达** | P1 | 5d | ① 检索分数过低时走"低置信"分支：明确告知未找到，而非硬凑答案；② `ChatResponse` 增加置信度字段；③ 评测集上"应拒答"样本的拒答率 ≥ 80% | RAG-041、RAG-003 | `ApiController`、`ChatService` |
 | **RAG-047** | **多模型/多 Provider 可插拔** | P2 | 13d | ① LLM/Embedding/Rerank 抽象为 Provider 接口，支持 OpenAI 兼容 + 本地 vLLM/Ollama；② 通过资源池配置切换，无需改代码 | RAG-100 | `BailianConfig`、`ResourcePoolLoader` |
@@ -406,7 +407,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042 已完成。** 下一步建议：M3 其余体验项（RAG-044 多轮），
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026/046），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 ---

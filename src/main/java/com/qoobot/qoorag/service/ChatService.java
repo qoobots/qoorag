@@ -61,6 +61,11 @@ public class ChatService {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> chat(String query, String contextText, Long kbId) {
+        return chat(query, contextText, kbId, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> chat(String query, String contextText, Long kbId, String historyText) {
         // 0. 内容安全检测（#18；关闭时 fail-open 放行）
         ContentSafetyService.Result safety = contentSafety.checkText(query);
         if (safety.verdict == ContentSafetyService.Verdict.BLOCKED) {
@@ -74,7 +79,7 @@ public class ChatService {
         // 2. 构建 OpenAI 兼容请求
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", tpl.content()));
-        messages.add(Map.of("role", "user", "content", query));
+        messages.add(Map.of("role", "user", "content", buildUserContent(query, historyText)));
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", config.getChatModel());
@@ -155,6 +160,12 @@ public class ChatService {
     @SuppressWarnings("unchecked")
     public StreamChatResult streamChat(String query, String contextText, Long kbId,
                                        Consumer<String> onToken, Consumer<String> onReasoning) {
+        return streamChat(query, contextText, kbId, null, onToken, onReasoning);
+    }
+
+    @SuppressWarnings("unchecked")
+    public StreamChatResult streamChat(String query, String contextText, Long kbId, String historyText,
+                                       Consumer<String> onToken, Consumer<String> onReasoning) {
         ContentSafetyService.Result safety = contentSafety.checkText(query);
         if (safety.verdict == ContentSafetyService.Verdict.BLOCKED) {
             throw new BizException(ErrorCode.CONTENT_BLOCKED, "提问内容命中内容安全拦截：" + safety.reason);
@@ -165,7 +176,7 @@ public class ChatService {
 
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", tpl.content()));
-        messages.add(Map.of("role", "user", "content", query));
+        messages.add(Map.of("role", "user", "content", buildUserContent(query, historyText)));
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", config.getChatModel());
@@ -260,6 +271,70 @@ public class ChatService {
 
         log.info("Chat 流式完成，model={} tokens(p={} c={} t={})", model, promptTokens, completionTokens, totalTokens);
         return new StreamChatResult(model, promptTokens, completionTokens, totalTokens);
+    }
+
+    // ===== RAG-044：多轮对话与指代消解 =====
+
+    /** 指代消解系统提示：将追问改写为独立、自包含的检索查询 */
+    private static final String COREF_SYSTEM = "你是一个对话指代消解助手。下面是多轮对话历史与用户的最新提问。"
+            + "请把最新提问改写成一个独立、自包含的检索查询，消解其中的代词与省略"
+            + "（如“它”“这个”“前者”“上一步”“为什么”等需要结合历史才能理解的部分）。"
+            + "只输出改写后的查询文本本身，不要解释，不要加任何引号或前缀。";
+
+    /**
+     * RAG-044：根据对话历史消解追问中的指代/省略，得到可独立检索的 query。
+     * 历史为空或消解失败时回退为原 query（fail-soft，不阻塞主链路）。
+     */
+    public String resolveQuery(String query, String historyText) {
+        if (historyText == null || historyText.isBlank()) {
+            return query;
+        }
+        String rewritten = complete(COREF_SYSTEM, historyText + "\n\n最新提问：" + query);
+        if (rewritten == null || rewritten.isBlank()) {
+            return query;
+        }
+        return rewritten.trim();
+    }
+
+    /** 将历史拼接到用户问题前，使 LLM 拥有多轮上下文；无历史时原样返回 query */
+    private String buildUserContent(String query, String historyText) {
+        if (historyText == null || historyText.isBlank()) {
+            return query;
+        }
+        return historyText + "\n\n当前问题：" + query;
+    }
+
+    /** 纯 LLM 补全（无检索），用于指代消解等轻量调用；失败返回 null（fail-soft） */
+    private String complete(String system, String user) {
+        try {
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of("role", "system", "content", system));
+            messages.add(Map.of("role", "user", "content", user));
+            Map<String, Object> body = new HashMap<>();
+            body.put("model", config.getChatModel());
+            body.put("messages", messages);
+            body.put("temperature", 0.1);
+            body.put("max_tokens", 512);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(config.getChatApiKey());
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            String url = config.getChatBaseUrl() + "/chat/completions";
+            ResponseEntity<Map> resp = restTemplate.postForEntity(url, request, Map.class);
+            Map<String, Object> b = resp.getBody();
+            if (b == null) {
+                return null;
+            }
+            List<Map<String, Object>> choices = (List<Map<String, Object>>) b.get("choices");
+            if (choices == null || choices.isEmpty()) {
+                return null;
+            }
+            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+            return (String) message.get("content");
+        } catch (Exception e) {
+            log.warn("指代消解 LLM 调用失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** RAG-043：流式问答结果（增量已通过回调送出，这里只回传结束时的元信息） */
