@@ -15,6 +15,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -254,12 +256,107 @@ public class DocumentParserService {
                 }
                 log.info("PDF 解析完成：{}，{} 页，{} 字符",
                         file.getOriginalFilename(), pages, text.length());
-                return text;
+                // RAG-026：启发式识别 PDF 中「多列对齐」的文本行簇并转 Markdown 表格，
+                // 供 structure 切块器识别为 TYPE_TABLE 块（表格类 query 可召回）。
+                String withTables = detectPdfTables(text);
+                return withTables;
             } finally {
                 document.close();
             }
         } finally {
             tempFile.delete();
         }
+    }
+
+    // ===== RAG-026：PDF 表格启发式识别 =====
+
+    /**
+     * 把 PDFBox 提取文本中「连续多行、同列数、由 ≥2 空格分隔」的表格区块转成 Markdown 表格，
+     * 供 structure 切块器识别为 TYPE_TABLE 块（表格类 query 可召回）。
+     * 纯启发式：依赖 PDFBox 在列间插入的空格（sortByPosition=true 时更可靠）。
+     * 局限：列间距极小或扫描版 PDF 无法识别，生产建议配合 tabula/pdfplumber，详见任务说明。
+     */
+    static String detectPdfTables(String text) {
+        String[] rawLines = text.split("\n", -1);
+        List<String> out = new ArrayList<>();
+        List<String[]> tableRows = new ArrayList<>();
+        for (String raw : rawLines) {
+            String line = raw.replace("\t", "    ");
+            if (isTableRow(line)) {
+                tableRows.add(splitColumns(line));
+            } else {
+                if (!tableRows.isEmpty()) {
+                    flushTable(out, tableRows);
+                    tableRows.clear();
+                }
+                out.add(raw);
+            }
+        }
+        if (!tableRows.isEmpty()) {
+            flushTable(out, tableRows);
+        }
+        return String.join("\n", out);
+    }
+
+    private static void flushTable(List<String> out, List<String[]> tableRows) {
+        if (tableRows.size() >= 2) {
+            out.add(toMarkdownTable(tableRows));
+        } else {
+            for (String[] r : tableRows) {
+                out.add(String.join(" ", r));
+            }
+        }
+    }
+
+    /** 是否为表格行：被 ≥2 空格切分为 ≥2 列，且非普通句尾、含数字/冒号或 ≥3 列等表格特征 */
+    private static boolean isTableRow(String line) {
+        if (line == null || line.length() < 6) {
+            return false;
+        }
+        String[] cols = splitColumns(line);
+        if (cols.length < 2) {
+            return false;
+        }
+        String trimmed = line.trim();
+        if (trimmed.endsWith("。") || trimmed.endsWith("．") || trimmed.endsWith("?")
+                || trimmed.endsWith("？") || trimmed.endsWith(".")) {
+            return false;
+        }
+        boolean hasGap = line.contains("  ");
+        boolean looksTabular = hasGap && (line.matches(".*\\d.*") || line.contains("：")
+                || line.contains(":") || cols.length >= 3);
+        return looksTabular;
+    }
+
+    private static String[] splitColumns(String line) {
+        return Arrays.stream(line.trim().split("\\s{2,}"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+    }
+
+    private static String toMarkdownTable(List<String[]> rows) {
+        if (rows.isEmpty()) {
+            return "";
+        }
+        int cols = rows.get(0).length;
+        long consistent = rows.stream().filter(r -> r.length == cols).count();
+        // 列数不一致过多则退化为逐行管道表达（不生成错误表头）
+        if (consistent < Math.max(2, rows.size() / 2)) {
+            StringBuilder sb = new StringBuilder();
+            for (String[] r : rows) {
+                sb.append("| ").append(String.join(" | ", r)).append(" |\n");
+            }
+            return sb.toString().trim();
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("| ").append(String.join(" | ", rows.get(0))).append(" |\n");
+        sb.append("| ").append("--- | ".repeat(cols)).append("\n");
+        for (int i = 1; i < rows.size(); i++) {
+            if (rows.get(i).length == cols) {
+                sb.append("| ").append(String.join(" | ", rows.get(i))).append(" |\n");
+            }
+        }
+        return sb.toString().trim();
     }
 }
