@@ -17,10 +17,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** 对外检索 / 问答 API（API Key 鉴权，4.10） */
 @RestController
@@ -36,6 +44,13 @@ public class ApiController {
     private final ContextAssembler contextAssembler;
     private final MetricsConfig.RagMetrics ragMetrics;
     private final AuditService auditService;
+
+    /** RAG-043 流式问答专用线程池（守护线程，避免阻塞请求线程；CallerRuns 兜底防丢任务） */
+    private final ExecutorService streamExecutor = new ThreadPoolExecutor(
+            4, 16, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(128),
+            r -> { Thread t = new Thread(r, "qoorag-sse"); t.setDaemon(true); return t; },
+            new ThreadPoolExecutor.CallerRunsPolicy());
 
     /** 生产检索/问答默认返回条数（application.yml: qoorag.retrieval.top-k） */
     @Value("${qoorag.retrieval.top-k:5}")
@@ -87,34 +102,111 @@ public class ApiController {
         }
     }
 
-    /** 问答：检索 → 拼 Prompt → 调 LLM → 返回 answer + sources + usage，并留痕 */
+    /**
+     * 问答：检索 → 拼 Prompt → 调 LLM → 返回 answer + sources + usage，并留痕。
+     * RAG-043：body 带 {@code stream:true} 时改为 SSE 流式返回（先出 reasoning/token，结束事件带 sources + usage）。
+     */
     @PostMapping("/chat")
-    public Result chat(@RequestBody Map<String, Object> body) {
+    public Object chat(@RequestBody Map<String, Object> body) {
         SessionInfo ctx = SecurityContext.get();
         String query = (String) body.get("query");
         if (query == null || query.isBlank()) {
             return Result.fail(400, "query 不能为空");
         }
-        Integer topK = body.get("topK") == null ? defaultTopK : ((Number) body.get("topK")).intValue();
-        if (topK < 1 || topK > 100) {
-            topK = Math.max(1, Math.min(topK, 100));
+        int rawTopK = body.get("topK") == null ? defaultTopK : ((Number) body.get("topK")).intValue();
+        final int topK = Math.max(1, Math.min(rawTopK, 100));
+        boolean stream = Boolean.TRUE.equals(body.get("stream"));
+
+        // 先在请求线程抓取 ThreadLocal 安全上下文；流式路径将在后台线程执行，无法再读 ThreadLocal
+        final Long reqKbId = ctx == null ? null : ctx.getKbId();
+        final Long reqTenantId = ctx == null ? null : ctx.getTenantId();
+        final Long reqActor = actorOf(ctx);
+
+        if (!stream) {
+            return chatSync(query, topK, ctx);
         }
 
+        // ===== RAG-043 流式路径 =====
+        SseEmitter emitter = new SseEmitter(180_000L);
+        streamExecutor.execute(() -> {
+            long start = System.currentTimeMillis();
+            try {
+                int retrieveTopK = rerankService.isEnabled()
+                        ? Math.max(topK, rerankService.getTopN() * 4) : topK;
+                List<RetrieveChunk> chunks = retrieveService.retrieve(query, retrieveTopK, reqKbId, reqTenantId);
+                chunks = rerankService.rerank(query, chunks);
+                ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
+                List<RetrieveChunk> usedChunks = assembled.used();
+
+                StringBuilder answerBuf = new StringBuilder();
+                ChatService.StreamChatResult sr = chatService.streamChat(
+                        query, assembled.promptContext(), reqKbId,
+                        token -> { answerBuf.append(token); sendSse(emitter, "token", "token", token); },
+                        reasoning -> sendSse(emitter, "reasoning", "reasoning", reasoning));
+
+                // 结束事件：sources + usage + 完整 answer（便于客户端校验）
+                List<ChatResponse.SourceInfo> sources =
+                        ChatResponse.of(answerBuf.toString(), sr.getModel(), 0, 0, usedChunks).getSources();
+                Map<String, Object> done = new LinkedHashMap<>();
+                done.put("type", "done");
+                done.put("model", sr.getModel());
+                done.put("answer", answerBuf.toString());
+                done.put("usage", Map.of("promptTokens", sr.getPromptTokens(),
+                        "completionTokens", sr.getCompletionTokens(),
+                        "totalTokens", sr.getTotalTokens()));
+                done.put("sources", sources);
+                emitter.send(SseEmitter.event().name("done").data(done));
+                emitter.complete();
+
+                // 留痕（与同步路径一致）
+                QaTrace trace = new QaTrace();
+                trace.setKbId(reqKbId);
+                trace.setTenantId(reqTenantId);
+                trace.setQuestion(query);
+                trace.setAnswer(answerBuf.toString());
+                trace.setModel(sr.getModel());
+                trace.setParams("topK=" + topK
+                        + ",promptSource=stream"
+                        + ",contextTokens=" + assembled.totalTokens()
+                        + ",droppedDup=" + assembled.droppedByDup()
+                        + ",droppedBudget=" + assembled.droppedByBudget());
+                trace.setSources(String.valueOf(usedChunks.size()));
+                trace.setTraceJson(String.format(
+                        "{\"query\":\"%s\",\"topK\":%d,\"retrieved\":%d,\"contextUsed\":%d,\"contextTokens\":%d,\"promptSource\":\"stream\",\"totalTokens\":%d}",
+                        escape(query), topK, chunks.size(), usedChunks.size(),
+                        assembled.totalTokens(), sr.getTotalTokens()));
+                trace.setCreatedAt(LocalDateTime.now());
+                qaTraceRepository.save(trace);
+
+                auditService.log("CHAT", "Query", String.valueOf(reqKbId), null,
+                        "topK=" + topK + ",sources=" + usedChunks.size() + ",stream=true",
+                        reqTenantId, reqActor);
+                ragMetrics.recordChat(System.currentTimeMillis() - start);
+            } catch (Exception e) {
+                log.error("流式问答失败: {}", e.getMessage(), e);
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(Map.of("error", e.getMessage())));
+                } catch (IOException ignored) { }
+                emitter.completeWithError(e);
+            }
+        });
+        return emitter;
+    }
+
+    /** 同步问答（非流式），行为与原实现完全一致，供回归保证 */
+    private Result chatSync(String query, int topK, SessionInfo ctx) {
         long start = System.currentTimeMillis();
         try {
             // 1. 检索召回（宽召回：hybrid + 大候选池，保证高 Recall）
-            //    精排开启时，拉取比最终需求更宽的候选（至少 rerank.top-n 的若干倍），
-            //    供 cross-encoder 精排后再截断到 rerank.top-n，确保精排有候选可排（否则会因候选数<=top-n 空转）
             int retrieveTopK = rerankService.isEnabled()
                     ? Math.max(topK, rerankService.getTopN() * 4)
                     : topK;
             List<RetrieveChunk> chunks = retrieveService.retrieve(query, retrieveTopK, ctx.getKbId(), ctx.getTenantId());
 
-            // 1.5. 精排（方案 2）：开启时对召回候选做 cross-encoder 重排并截断到 rerank.top-n，
-            //      仅取高相关片段喂大模型，压低噪声与 token 成本；失败则优雅降级为原始候选
+            // 1.5. 精排
             chunks = rerankService.rerank(query, chunks);
 
-            // 2. 上下文组装（RAG-041）：去重 → token 预算裁剪 → Lost-in-the-Middle 重排 → 来源标注
+            // 2. 上下文组装（RAG-041）
             ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
 
             // 3. 调 LLM 生成回答（Prompt 模板外置，RAG-040）
@@ -124,7 +216,7 @@ public class ApiController {
             @SuppressWarnings("unchecked")
             Map<String, Object> usageMap = (Map<String, Object>) llmResult.get("usage");
 
-            // 4. 构建响应（sources 用预算裁剪后实际使用的片段，保证引用与答案一致）
+            // 4. 构建响应
             List<RetrieveChunk> usedChunks = assembled.used();
             ChatResponse chatResponse = ChatResponse.of(
                     answer, model,
@@ -133,7 +225,7 @@ public class ApiController {
                     usedChunks
             );
 
-            // 5. 问答留痕（4.8，独立于业务数据）
+            // 5. 问答留痕
             QaTrace trace = new QaTrace();
             trace.setKbId(ctx.getKbId());
             trace.setTenantId(ctx.getTenantId());
@@ -157,6 +249,15 @@ public class ApiController {
         } catch (Exception e) {
             log.error("问答失败: {}", e.getMessage(), e);
             return Result.fail(500, "问答失败: " + e.getMessage());
+        }
+    }
+
+    /** SSE 辅助：以 JSON 对象帧推送（key→value），避免裸字符串中的换行破坏 SSE 帧格式 */
+    private static void sendSse(SseEmitter emitter, String name, String key, String value) {
+        try {
+            emitter.send(SseEmitter.event().name(name).data(Collections.singletonMap(key, value)));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 

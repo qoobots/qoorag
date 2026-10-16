@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026/042/043/044/046、RAG-051~055 | ❌ |
+| **M3 体验与成本** | RAG-022/025/026/042/044/046、RAG-051~055（RAG-043 流式已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成。** 下一步建议：M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮），
+> **P0（M1）13 项 + M2 全部完成，RAG-043 流式已完成。** 下一步建议：M3 其余体验项（RAG-042 引用归因 / RAG-044 多轮），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 **顺带修复的预存缺陷**：
@@ -348,7 +348,8 @@ flowchart TB
 | **RAG-041** | **上下文组装器（去冗余 + Token 预算）** | **P0** ✅ | 8d | ① 新增 `ContextAssembler`：内容去重 → 相关性排序 → token 预算裁剪（预算可配）→ 应对 Lost-in-middle 的重排（高分放首尾）；② 片段带标题/来源前缀（利用 RAG-020 元数据）；③ 评测集上 Faithfulness 提升 ≥ 0.03 或 token 成本降 ≥ 15% | RAG-020、RAG-003 | `ApiController.java:114-116`、`ChatService` |
 | | *实现说明* | | | | | 新增 `ContextAssembler`，四步：内容指纹去重 → token 预算裁剪（高相关优先、低相关先丢）→ U 型位置重排（最相关放首尾、最不相关放中间）→ 来源标注（文档名 / 标题路径 / 页码）。`ApiController` 的 `sources` 改用**预算裁剪后实际使用**的片段，保证引用与答案一致；`qa_trace` 落 `trace_json`（召回数/上下文用量/丢重/丢预算/模板来源/token 用量）。新增 20 个单测覆盖去重、预算、重排、渲染、token 估算。**待办**：Faithfulness/成本量化（依赖 RAG-000/003） |
 | **RAG-042** | **引用归因增强（句子级）** | **P1** | 8d | ① 答案按句标注来源 chunk_id（Prompt 约束 + 后解析）；② `ChatResponse.sources` 扩展：标题、页码、heading_path、精确片段；③ 前端可点击引用跳转定位 | RAG-020、RAG-040 | `ChatResponse`、`ChatService`、`playground.html` |
-| **RAG-043** | **流式输出（SSE）** | P1 | 8d | ① `/api/v1/chat` 支持 `stream=true`，SSE 增量返回；② 结束后推送 sources 与 usage 事件；③ 非流式行为保持不变（兼容）；④ 首字延迟 ≤ 1.5s（P95） | RAG-041 | `ApiController`、`ChatService` |
+| **RAG-043** | **流式输出（SSE）** | P1 ✅ | 8d | ① `/api/v1/chat` 支持 `stream=true`，SSE 增量返回；② 结束后推送 sources 与 usage 事件；③ 非流式行为保持不变（兼容）；④ 首字延迟 ≤ 1.5s（P95） | RAG-041 | `ApiController`、`ChatService` |
+| | *实现说明* | | | | | `ApiController.chat` 按 `stream:true` 分支返回 `SseEmitter`：后台线程执行 检索→精排→上下文组装→流式 LLM，逐帧推送 `event:reasoning`（推理模型思考）/ `event:token`（答案 token），结束帧 `event:done` 携带 sources+usage+完整 answer；非流式路径（`chatSync`）保持原 `Result` 返回不变（回归已验证）。流式读取用 Java 17 内置 `java.net.http.HttpClient` 消费 SSE，无需引入 WebFlux；专用守护线程池 `streamExecutor` 避免阻塞请求线程。已端到端验证：reasoning 84 帧 + token 18 帧 + done 事件（含引用 [1] 与 sources）。 |
 | **RAG-044** | **多轮对话与指代消解** | P1 | 13d | ① 支持 `sessionId` 携带历史（最近 N 轮，可配）；② 追问类 query 先做指代消解再检索；③ 历史过长时自动压缩；④ 提供会话历史存储与 TTL 清理 | RAG-015 | 新增 `ChatSession` 实体、`ApiController` |
 | **RAG-045** | **LLM 调用超时/重试/降级** | P1 | 3d | ① Chat 调用接入 `HttpRetryUtil`（对齐 Embedding/Rerank 现有做法）与可配超时；② 失败时明确错误码与可重试标记；③ 记录重试次数到 trace | RAG-006 | `ChatService.java:90` |
 | **RAG-046** | **拒答与置信度表达** | P1 | 5d | ① 检索分数过低时走"低置信"分支：明确告知未找到，而非硬凑答案；② `ChatResponse` 增加置信度字段；③ 评测集上"应拒答"样本的拒答率 ≥ 80% | RAG-041、RAG-003 | `ApiController`、`ChatService` |
@@ -404,7 +405,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成。** 下一步建议：M3 的体验项（RAG-042 引用归因 / RAG-043 流式 / RAG-044 多轮），
+> **P0（M1）13 项 + M2 全部完成，RAG-043 流式已完成。** 下一步建议：M3 其余体验项（RAG-042 引用归因 / RAG-044 多轮），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 ---
