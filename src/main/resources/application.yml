@@ -136,6 +136,9 @@ qoorag:
     max-context-tokens: 3000 # 喂给 LLM 的参考资料估算 token 上限；<=0 不限制
     context-reorder: true    # Lost-in-the-Middle 缓解：最相关片段放首尾、次相关放中间
     max-chunk-chars: 1200    # 单块在 Prompt 中的最大字符数；<=0 不截断
+    # RAG-022 父子块（small-to-big）：命中子块后回填父块上下文，提升答案完整性；引用仍指向子块
+    small-to-big:
+      enabled: true           # 关闭则退化为直接使用子块内容
     rerank:
       enabled: ${RERANK_ENABLED:false} # 精排开关（.env: RERANK_ENABLED）；关闭时检索照常，只是不精排
       endpoint: ${QOORAG_RERANK_ENDPOINT:}  # 百炼 rerank 专属域名（MAAS 工作空间），需填入真实业务空间 ID
@@ -145,6 +148,8 @@ qoorag:
   # 异步入库（RAG-030）
   ingest:
     chunk-strategy: structure  # 分块策略：structure（结构感知，RAG-021）/ fixed（改造前固定长度）
+    # RAG-022 父子块：连续多少个子块聚合成一个父块（生成上下文单元）；<=1 表示不启用
+    parent-chunk-group-size: 4
     workers: 2                 # 后台入库线程数；过大将同时压满 embedding API 与 DB
     queue-capacity: 100        # 内存队列容量；超出后由调用线程直接执行（不丢任务）
     # Contextual Chunking（RAG-023）：为每个 chunk 生成"它在原文中的位置与内容"说明，

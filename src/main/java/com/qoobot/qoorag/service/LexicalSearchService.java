@@ -63,6 +63,7 @@ public class LexicalSearchService {
         c.setPageNo(rs.getObject("page_no") != null ? rs.getInt("page_no") : null);
         c.setChunkType(rs.getString("chunk_type"));
         c.setDocumentName(rs.getString("document_name"));
+        c.setParentChunkId(rs.getObject("parent_chunk_id", Long.class)); // RAG-022：父子块回填
         return c;
     };
 
@@ -88,7 +89,7 @@ public class LexicalSearchService {
             return List.of();
         }
         String sql = "SELECT c.id AS chunk_id, c.document_id, c.seq, c.content, "
-                + "c.heading_path, c.page_no, c.chunk_type, d.name AS document_name, "
+                + "c.heading_path, c.page_no, c.chunk_type, c.parent_chunk_id, d.name AS document_name, "
                 + "ts_rank_cd(c.tsv, qoorag_cjk_tsquery(?)) AS lex_score "
                 + "FROM chunk c JOIN document d ON d.id = c.document_id "
                 + "WHERE c.kb_id = ? AND c.tenant_id = ? "

@@ -227,7 +227,7 @@ public class RetrieveService {
      */
     private List<RetrieveChunk> queryVectorDb(float[] queryVec, int limit, Long kbId, Long tenantId) {
         String sql = "SELECT v.id, v.chunk_id, c.document_id, c.seq, c.content, "
-                + "c.heading_path, c.page_no, c.chunk_type, d.name AS document_name, "
+                + "c.heading_path, c.page_no, c.chunk_type, c.parent_chunk_id, d.name AS document_name, "
                 + "1 - (v.embedding <=> ?) AS similarity "
                 + "FROM vector_data v JOIN chunk c ON c.id = v.chunk_id "
                 + "JOIN document d ON d.id = c.document_id "
@@ -247,6 +247,7 @@ public class RetrieveService {
             c.setPageNo(rs.getObject("page_no") != null ? rs.getInt("page_no") : null);
             c.setChunkType(rs.getString("chunk_type"));
             c.setDocumentName(rs.getString("document_name"));
+            c.setParentChunkId(rs.getObject("parent_chunk_id", Long.class)); // RAG-022：父子块回填
             return c;
         };
 

@@ -31,6 +31,9 @@ public class RetrieveChunk {
     // ===== RAG-011 词法信号（可空）=====
     private Double lexScore;     // ts_rank_cd 词法相关度
 
+    // ===== RAG-022 父子块（可空）=====
+    private Long parentChunkId;  // 父块 ID；非空时上下文组装应回填父块内容（small-to-big）
+
     public RetrieveChunk() {}
 
     public RetrieveChunk(Long id, Long chunkId, Long documentId, Integer chunkSeq,
@@ -65,6 +68,8 @@ public class RetrieveChunk {
     public void setDocumentName(String documentName) { this.documentName = documentName; }
     public Double getLexScore() { return lexScore; }
     public void setLexScore(Double lexScore) { this.lexScore = lexScore; }
+    public Long getParentChunkId() { return parentChunkId; }
+    public void setParentChunkId(Long parentChunkId) { this.parentChunkId = parentChunkId; }
 
     @Override
     public String toString() {

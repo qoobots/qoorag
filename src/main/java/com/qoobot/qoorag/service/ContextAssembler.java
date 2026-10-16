@@ -1,8 +1,11 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.dto.RetrieveChunk;
+import com.qoobot.qoorag.entity.Chunk;
+import com.qoobot.qoorag.repository.ChunkRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -50,6 +53,15 @@ public class ContextAssembler {
     @Value("${qoorag.retrieval.max-chunk-chars:1200}")
     private int maxChunkChars;
 
+    /** RAG-022 父子块：命中子块后回填父块内容作为生成上下文（small-to-big）。
+     *  默认开启；关闭时退化为直接使用子块内容。 */
+    @Value("${qoorag.retrieval.small-to-big.enabled:true}")
+    private boolean smallToBigEnabled;
+
+    /** 父块内容解析用仓储（字段注入，避免破坏无参构造的单测；缺失时跳过回填） */
+    @Autowired(required = false)
+    private ChunkRepository chunkRepository;
+
     /** 组装结果 */
     public record AssembledContext(String promptContext, List<RetrieveChunk> used,
                                    int totalTokens, int droppedByBudget, int droppedByDup) {}
@@ -64,6 +76,10 @@ public class ContextAssembler {
         if (candidates == null || candidates.isEmpty()) {
             return new AssembledContext("", List.of(), 0, 0, 0);
         }
+
+        // 0. RAG-022 父子块回填：命中子块时把内容替换为父块，提升答案完整性
+        //    引用仍指向子块（chunkId 不变），保持句子级归因正确（RAG-042）
+        applySmallToBig(candidates);
 
         // 1. 去重（按内容指纹）
         List<RetrieveChunk> deduped = new ArrayList<>(candidates.size());
@@ -171,6 +187,36 @@ public class ContextAssembler {
             return content.substring(0, maxChunkChars) + "…（内容过长已截断）";
         }
         return content;
+    }
+
+    /**
+     * RAG-022 父子块回填：对命中且带父块的子块，把用于组装的 content 替换为父块内容。
+     * chunkId / 元数据（headingPath、pageNo、documentName）保持子块原值，确保引用归因正确。
+     */
+    private void applySmallToBig(List<RetrieveChunk> candidates) {
+        if (!smallToBigEnabled || chunkRepository == null) {
+            return;
+        }
+        int applied = 0;
+        for (RetrieveChunk c : candidates) {
+            Long parentId = c.getParentChunkId();
+            if (parentId == null) {
+                continue;
+            }
+            try {
+                Chunk parent = chunkRepository.findById(parentId).orElse(null);
+                if (parent != null && parent.getContent() != null && !parent.getContent().isBlank()) {
+                    c.setContent(parent.getContent());
+                    applied++;
+                }
+            } catch (Exception e) {
+                // 父块解析失败不应阻断问答；退化为子块内容
+                log.warn("父子块回填失败（chunkId={}）：{}", c.getChunkId(), e.getMessage());
+            }
+        }
+        if (applied > 0) {
+            log.info("父子块回填：{} 个子块替换为父块上下文", applied);
+        }
     }
 
     /** 内容指纹：规范化（去空白）+ SHA-256 前 16 位十六进制 */

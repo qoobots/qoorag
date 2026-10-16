@@ -46,6 +46,10 @@ public class IngestService {
     @Value("${qoorag.ingest.chunk-strategy:structure}")
     private String chunkStrategy;
 
+    /** RAG-022 父子块：连续多少个子块聚合成一个父块（生成上下文单元）；<=1 表示不启用 */
+    @Value("${qoorag.ingest.parent-chunk-group-size:4}")
+    private int parentChunkGroupSize;
+
     private final DocumentRepository documentRepository;
     private final ChunkRepository chunkRepository;
     private final VectorDataRepository vectorDataRepository;
@@ -169,34 +173,59 @@ public class IngestService {
             log.info("向量化完成：{} 条", embeddings.size());
             report(progress, IngestTask.STAGE_EMBED, 80);
 
-            // 6. 写入 Chunk + VectorData
+            // 6. 写入 Chunk（RAG-022 父子块）+ VectorData（仅子块向量化）
             report(progress, IngestTask.STAGE_SAVE, 85);
-            List<Chunk> chunks = new ArrayList<>();
-            for (int i = 0; i < drafts.size(); i++) {
-                ChunkDraft d = drafts.get(i);
-                Chunk chunk = new Chunk();
-                chunk.setDocumentId(doc.getId());
-                chunk.setKbId(kbId);
-                chunk.setTenantId(tenantId);
-                chunk.setContent(d.content);
-                chunk.setSeq(i);
-                chunk.setHeadingPath(d.headingPath);
-                chunk.setCharStart(d.charStart);
-                chunk.setCharEnd(d.charEnd);
-                chunk.setChunkType(d.chunkType);
-                chunk.setTokenCount(estimateTokens(d.content));
-                if (contextPrefixes != null) {
-                    chunk.setContextPrefix(contextPrefixes.get(i));
-                }
-                chunk.setCreatedAt(LocalDateTime.now());
-                chunks.add(chunk);
-            }
-            chunks = chunkRepository.saveAll(chunks);
+            List<ParentGroup> parentGroups = groupIntoParents(drafts, parentChunkGroupSize);
 
-            List<VectorData> vectors = new ArrayList<>(chunks.size());
-            for (int i = 0; i < chunks.size(); i++) {
+            // 6.1 父块（生成上下文单元，本身不单独向量化）
+            List<Chunk> parents = new ArrayList<>();
+            for (int gi = 0; gi < parentGroups.size(); gi++) {
+                ParentGroup g = parentGroups.get(gi);
+                Chunk p = new Chunk();
+                p.setDocumentId(doc.getId());
+                p.setKbId(kbId);
+                p.setTenantId(tenantId);
+                p.setContent(g.parentContent());
+                p.setChunkType(Chunk.TYPE_PARENT);
+                p.setSeq(gi);
+                p.setTokenCount(estimateTokens(g.parentContent()));
+                p.setCreatedAt(LocalDateTime.now());
+                parents.add(p);
+            }
+            parents = chunkRepository.saveAll(parents);
+
+            // 6.2 子块（检索与向量化单元，关联父块）
+            List<Chunk> children = new ArrayList<>();
+            for (int gi = 0; gi < parentGroups.size(); gi++) {
+                Chunk parent = parents.get(gi);
+                for (int childIdx : parentGroups.get(gi).childIndices()) {
+                    ChunkDraft d = drafts.get(childIdx);
+                    Chunk c = new Chunk();
+                    c.setDocumentId(doc.getId());
+                    c.setKbId(kbId);
+                    c.setTenantId(tenantId);
+                    c.setContent(d.content());
+                    c.setSeq(childIdx);
+                    c.setHeadingPath(d.headingPath());
+                    c.setCharStart(d.charStart());
+                    c.setCharEnd(d.charEnd());
+                    c.setChunkType(d.chunkType());
+                    c.setTokenCount(estimateTokens(d.content()));
+                    c.setParentChunkId(parent.getId());
+                    if (contextPrefixes != null) {
+                        c.setContextPrefix(contextPrefixes.get(childIdx));
+                    }
+                    c.setCreatedAt(LocalDateTime.now());
+                    children.add(c);
+                }
+            }
+            children = chunkRepository.saveAll(children);
+
+            // 6.3 仅子块建向量（embeddings 与 drafts 顺序一致）
+            List<VectorData> vectors = new ArrayList<>(children.size());
+            for (int i = 0; i < children.size(); i++) {
                 VectorData vd = new VectorData();
-                vd.setChunkId(chunks.get(i).getId());
+                vd.setChunkId(children.get(i).getId());
                 vd.setKbId(kbId);
                 vd.setTenantId(tenantId);
                 vd.setEmbeddingArray(embeddings.get(i));
@@ -204,7 +233,7 @@ public class IngestService {
                 vectors.add(vd);
             }
             vectorDataRepository.saveAll(vectors);
-            log.info("入库完成：{} 个 chunk，{} 条向量", chunks.size(), vectors.size());
+            log.info("入库完成：{} 个子块 / {} 个父块，{} 条向量", children.size(), parents.size(), vectors.size());
             report(progress, IngestTask.STAGE_DONE, 100);
 
             // 6. 更新状态 = COMPLETED
@@ -241,8 +270,34 @@ public class IngestService {
     // ===== 文本分块 =====
 
     /** 分块草稿：内容 + 结构元数据 */
-    private record ChunkDraft(String content, String headingPath, Integer charStart,
-                              Integer charEnd, String chunkType) {}
+    record ChunkDraft(String content, String headingPath, Integer charStart,
+                     Integer charEnd, String chunkType) {}
+
+    /** RAG-022 父子块：父块内容 + 其下子块在原 drafts 中的索引 */
+    record ParentGroup(String parentContent, List<Integer> childIndices) {}
+
+    /**
+     * 把连续的子块按 groupSize 聚合成父块（small-to-big）。
+     * 父块内容 = 子块内容拼接，用于检索命中后回填为生成上下文；子块仍作为检索与向量化单元。
+     */
+    static List<ParentGroup> groupIntoParents(List<ChunkDraft> drafts, int groupSize) {
+        int size = Math.max(1, groupSize);
+        List<ParentGroup> groups = new ArrayList<>();
+        for (int i = 0; i < drafts.size(); i += size) {
+            int end = Math.min(i + size, drafts.size());
+            List<Integer> childIdx = new ArrayList<>(end - i);
+            StringBuilder sb = new StringBuilder();
+            for (int j = i; j < end; j++) {
+                childIdx.add(j);
+                if (sb.length() > 0) {
+                    sb.append("\n\n");
+                }
+                sb.append(drafts.get(j).content());
+            }
+            groups.add(new ParentGroup(sb.toString().trim(), childIdx));
+        }
+        return groups;
+    }
 
     /** 依据文件名推断解析器标识（用于 document.parser 字段，RAG-025） */
     private static String resolveParser(String filename) {

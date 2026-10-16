@@ -16,13 +16,15 @@ import java.time.LocalDateTime;
 @Table(name = "chunk")
 public class Chunk {
 
-    /** 块类型：paragraph / heading / table / code / list / figure */
+    /** 块类型：paragraph / heading / table / code / list / figure / parent */
     public static final String TYPE_PARAGRAPH = "paragraph";
     public static final String TYPE_HEADING = "heading";
     public static final String TYPE_TABLE = "table";
     public static final String TYPE_CODE = "code";
     public static final String TYPE_LIST = "list";
     public static final String TYPE_FIGURE = "figure";
+    /** RAG-022 父子块：父块（生成上下文单元，本身不单独向量化） */
+    public static final String TYPE_PARENT = "parent";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
