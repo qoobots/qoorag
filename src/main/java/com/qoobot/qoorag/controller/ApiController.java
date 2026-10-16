@@ -144,9 +144,8 @@ public class ApiController {
                         token -> { answerBuf.append(token); sendSse(emitter, "token", "token", token); },
                         reasoning -> sendSse(emitter, "reasoning", "reasoning", reasoning));
 
-                // 结束事件：sources + usage + 完整 answer（便于客户端校验）
-                List<ChatResponse.SourceInfo> sources =
-                        ChatResponse.of(answerBuf.toString(), sr.getModel(), 0, 0, usedChunks).getSources();
+                // 结束事件：sources + citations（句子级引用归因）+ usage + 完整 answer
+                ChatResponse chatResp = ChatResponse.of(answerBuf.toString(), sr.getModel(), 0, 0, usedChunks);
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type", "done");
                 done.put("model", sr.getModel());
@@ -154,7 +153,8 @@ public class ApiController {
                 done.put("usage", Map.of("promptTokens", sr.getPromptTokens(),
                         "completionTokens", sr.getCompletionTokens(),
                         "totalTokens", sr.getTotalTokens()));
-                done.put("sources", sources);
+                done.put("sources", chatResp.getSources());
+                done.put("citations", chatResp.getCitations());
                 emitter.send(SseEmitter.event().name("done").data(done));
                 emitter.complete();
 

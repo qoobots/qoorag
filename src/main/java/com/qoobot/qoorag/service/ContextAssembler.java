@@ -30,7 +30,8 @@ import java.util.Set;
  *   <li><b>位置重排</b>：缓解 "Lost in the Middle"——把最相关的放首尾、次相关的放中间；</li>
  *   <li><b>来源标注</b>：每块前置「文档名 / 标题路径 / 页码」，既帮助模型归因，也让引用可点击。</li>
  * </ol>
- * 组装结果 {@link AssembledContext} 同时返回实际使用的片段，供 API 的 {@code sources} 回传。
+ * 组装结果 {@link AssembledContext} 的 {@code used} 与 prompt 中【参考资料 N】编号同序，
+ * 供 API 的 {@code sources} 回传与句子级引用归因（RAG-042）对齐。
  */
 @Service
 public class ContextAssembler {
@@ -113,7 +114,9 @@ public class ContextAssembler {
 
         log.info("上下文组装：输入 {} → 去重后 {} → 预算内 {}（丢重 {} / 丢预算 {}），估算 {} tokens",
                 candidates.size(), deduped.size(), kept.size(), droppedByDup, droppedByBudget, totalTokens);
-        return new AssembledContext(sb.toString().stripTrailing(), kept, totalTokens,
+        // 注意：used 必须与 prompt 中【参考资料 N】的编号同序（均为 ordered），
+        // 否则答案里的 [n] 引用会错指到 sources 列表的错误位置（RAG-042 句子级归因依赖此对齐）
+        return new AssembledContext(sb.toString().stripTrailing(), ordered, totalTokens,
                 droppedByBudget, droppedByDup);
     }
 
