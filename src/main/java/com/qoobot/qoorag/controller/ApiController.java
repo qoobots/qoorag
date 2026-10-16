@@ -14,6 +14,7 @@ import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.MmrService;
 import com.qoobot.qoorag.service.QueryTransformService;
 import com.qoobot.qoorag.service.ContextAssembler;
+import com.qoobot.qoorag.service.ChatCacheService;
 import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.slf4j.Logger;
@@ -50,6 +51,7 @@ public class ApiController {
     private final ChatHistoryService historyService;
     private final MmrService mmrService;
     private final QueryTransformService queryTransformService;
+    private final ChatCacheService chatCacheService;
 
     /** RAG-043 流式问答专用线程池（守护线程，避免阻塞请求线程；CallerRuns 兜底防丢任务） */
     private final ExecutorService streamExecutor = new ThreadPoolExecutor(
@@ -71,6 +73,9 @@ public class ApiController {
     /** RAG-015：检索前是否开启查询改写（默认关，避免未评估回归） */
     @Value("${qoorag.retrieval.query-rewrite-enabled:false}")
     private boolean queryRewriteEnabled;
+    /** RAG-018：是否开启 MMR 多样性重排（默认关，避免未评估回归） */
+    @Value("${qoorag.retrieval.mmr-enabled:false}")
+    private boolean mmrEnabled;
 
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
@@ -81,7 +86,8 @@ public class ApiController {
                          AuditService auditService,
                          ChatHistoryService historyService,
                          MmrService mmrService,
-                         QueryTransformService queryTransformService) {
+                         QueryTransformService queryTransformService,
+                         ChatCacheService chatCacheService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
@@ -92,6 +98,7 @@ public class ApiController {
         this.historyService = historyService;
         this.mmrService = mmrService;
         this.queryTransformService = queryTransformService;
+        this.chatCacheService = chatCacheService;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -161,8 +168,34 @@ public class ApiController {
         }
         final String reqEffectiveQuery = effectiveQuery;
 
+        // RAG-051：查询结果缓存仅对「无历史上下文」的单轮请求生效（多轮答案依赖历史，不可复用）。
+        // 策略签名纳入 rerank/rewrite/mmr 开关，确保不同检索策略不互相命中错误缓存。
+        final boolean cacheable = chatCacheService.isEnabled() && history.isEmpty();
+        final String chatParamSig = "rk=" + rerankService.isEnabled()
+                + ",rw=" + queryRewriteEnabled + ",mmr=" + mmrEnabled;
+        final String chatCacheKey = cacheable
+                ? chatCacheService.key(reqKbId, query, topK, chatParamSig) : null;
+
         if (!stream) {
-            return chatSync(query, topK, ctx, reqEffectiveQuery, reqHistoryText, reqSessionId);
+            return chatSync(query, topK, ctx, reqEffectiveQuery, reqHistoryText, reqSessionId, cacheable, chatCacheKey);
+        }
+
+        // RAG-051：查询结果缓存命中（仅单轮/无历史）直接重放，跳过检索与 LLM 调用
+        if (cacheable) {
+            ChatResponse cached = chatCacheService.get(chatCacheKey);
+            if (cached != null) {
+                log.info("RAG-051 命中查询结果缓存（跳过检索与 LLM）");
+                SseEmitter emitter = new SseEmitter(180_000L);
+                sendSse(emitter, "token", "token", cached.getAnswer());
+                try {
+                    emitter.send(SseEmitter.event().name("done").data(buildDoneFromResponse(cached)));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                emitter.complete();
+                ragMetrics.recordChat(0);
+                return emitter;
+            }
         }
 
         // ===== RAG-043 流式路径 =====
@@ -205,6 +238,9 @@ public class ApiController {
                 ChatResponse chatResp = ChatResponse.of(answer, model, pTokens, cTokens, usedChunks);
                 chatResp.setConfidence(confidence);
                 chatResp.setConfidenceScore(topScore);
+                if (cacheable) {
+                    chatCacheService.put(chatCacheKey, chatResp); // RAG-051：结果落缓存
+                }
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type", "done");
                 done.put("model", model);
@@ -259,11 +295,21 @@ public class ApiController {
         return emitter;
     }
 
-    /** 同步问答（非流式），行为与原实现一致，并支持 RAG-044 多轮会话上下文 */
+    /** 同步问答（非流式），行为与原实现一致，并支持 RAG-044 多轮会话上下文与 RAG-051 结果缓存 */
     private Result chatSync(String query, int topK, SessionInfo ctx,
-                            String effectiveQuery, String historyText, String sessionId) {
+                            String effectiveQuery, String historyText, String sessionId,
+                            boolean cacheable, String chatCacheKey) {
         long start = System.currentTimeMillis();
         try {
+            // RAG-051：单轮结果缓存命中直接返回，跳过检索与 LLM
+            if (cacheable) {
+                ChatResponse cached = chatCacheService.get(chatCacheKey);
+                if (cached != null) {
+                    log.info("RAG-051 命中查询结果缓存（跳过检索与 LLM）");
+                    ragMetrics.recordChat(0);
+                    return Result.ok(cached);
+                }
+            }
             // 1. 检索召回（宽召回：hybrid + 大候选池，保证高 Recall）；多轮时用指代消解后的独立 query
             int retrieveTopK = rerankService.isEnabled()
                     ? Math.max(topK, rerankService.getTopN() * 4)
@@ -336,6 +382,9 @@ public class ApiController {
             auditService.log("CHAT", "Query", String.valueOf(ctx.getKbId()), null,
                     "topK=" + topK + ",sources=" + usedChunks.size() + ",confidence=" + confidence, ctx.getTenantId(), actorOf(ctx));
             ragMetrics.recordChat(System.currentTimeMillis() - start);
+            if (cacheable) {
+                chatCacheService.put(chatCacheKey, chatResponse); // RAG-051：结果落缓存
+            }
             return Result.ok(chatResponse);
         } catch (Exception e) {
             log.error("问答失败: {}", e.getMessage(), e);
@@ -350,6 +399,24 @@ public class ApiController {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** RAG-051：从缓存的 ChatResponse 重建流式 done 事件（sources/citations/confidence/usage 一并回放） */
+    private static Map<String, Object> buildDoneFromResponse(ChatResponse resp) {
+        Map<String, Object> done = new LinkedHashMap<>();
+        done.put("type", "done");
+        done.put("model", resp.getModel());
+        done.put("answer", resp.getAnswer());
+        ChatResponse.Usage u = resp.getUsage();
+        done.put("usage", u != null ? Map.of(
+                "promptTokens", u.getPromptTokens(),
+                "completionTokens", u.getCompletionTokens(),
+                "totalTokens", u.getTotalTokens()) : Map.of());
+        done.put("sources", resp.getSources());
+        done.put("citations", resp.getCitations());
+        done.put("confidence", resp.getConfidence());
+        done.put("confidenceScore", resp.getConfidenceScore());
+        return done;
     }
 
     /** RAG-044：将历史轮次格式化为可读文本（供指代消解与 LLM 上下文注入） */

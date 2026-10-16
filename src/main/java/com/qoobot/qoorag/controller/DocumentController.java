@@ -6,6 +6,7 @@ import com.qoobot.qoorag.entity.Document;
 import com.qoobot.qoorag.entity.IngestTask;
 import com.qoobot.qoorag.repository.DocumentRepository;
 import com.qoobot.qoorag.service.AuditService;
+import com.qoobot.qoorag.service.ChatCacheService;
 import com.qoobot.qoorag.service.IngestQueueService;
 import com.qoobot.qoorag.service.IngestService;
 import org.slf4j.Logger;
@@ -34,15 +35,18 @@ public class DocumentController {
     private final IngestService ingestService;
     private final DocumentRepository documentRepository;
     private final AuditService auditService;
+    private final ChatCacheService chatCacheService;
 
     public DocumentController(IngestQueueService ingestQueueService,
                               IngestService ingestService,
                               DocumentRepository documentRepository,
-                              AuditService auditService) {
+                              AuditService auditService,
+                              ChatCacheService chatCacheService) {
         this.ingestQueueService = ingestQueueService;
         this.ingestService = ingestService;
         this.documentRepository = documentRepository;
         this.auditService = auditService;
+        this.chatCacheService = chatCacheService;
     }
 
     private void requireKbAdmin() {
@@ -60,6 +64,8 @@ public class DocumentController {
             @PathVariable Long kbId,
             @RequestParam(value = "files", required = false) List<MultipartFile> files) {
         requireKbAdmin();
+        // RAG-051③：KB 文档发生变更，主动失效该 KB 的查询结果缓存（TTL 兜底防脏读）
+        chatCacheService.invalidateKb(kbId);
         Long tenantId = SecurityContext.get().getTenantId();
         Long userId = SecurityContext.get().getUserId();
 

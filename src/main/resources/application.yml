@@ -58,6 +58,9 @@ qoorag:
       ttl-minutes: 1440      # 会话历史 Redis 留存时长（分钟），过期自动清理
     low-confidence-score: 0.30     # RAG-046：检索 top 分数低于此值视为低置信，走拒答分支（省 LLM 调用）
     medium-confidence-score: 0.55  # RAG-046：低于此值标 medium，否则 high
+    # 查询结果缓存（RAG-051）：相同 KB+query+策略参数的结果缓存，命中跳过检索与 LLM
+    cache-enabled: true            # 关闭则不缓存（仍按 TTL 失效逻辑存在）
+    cache-ttl-minutes: 5           # 缓存留存时长（分钟）；文档变更会主动失效该 KB 缓存
   # 向量缓存（RAG-050）
   embedding:
     cache-enabled: true          # 按 sha256(text|model) 缓存 embedding，重复文档/query 命中跳过外部 API
