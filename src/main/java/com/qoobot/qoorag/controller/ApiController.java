@@ -58,6 +58,13 @@ public class ApiController {
     @Value("${qoorag.retrieval.top-k:5}")
     private int defaultTopK;
 
+    /** RAG-046：检索 top 分数低于此值视为低置信，走拒答分支（省 LLM 调用） */
+    @Value("${qoorag.chat.low-confidence-score:0.3}")
+    private double lowConfidenceScore;
+    /** RAG-046：置信度分级阈值（低于为 medium，否则 high） */
+    @Value("${qoorag.chat.medium-confidence-score:0.55}")
+    private double mediumConfidenceScore;
+
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
                          ChatService chatService,
@@ -151,28 +158,49 @@ public class ApiController {
                 ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
                 List<RetrieveChunk> usedChunks = assembled.used();
 
-                StringBuilder answerBuf = new StringBuilder();
-                ChatService.StreamChatResult sr = chatService.streamChat(
-                        query, assembled.promptContext(), reqKbId, reqHistoryText,
-                        token -> { answerBuf.append(token); sendSse(emitter, "token", "token", token); },
-                        reasoning -> sendSse(emitter, "reasoning", "reasoning", reasoning));
+                // RAG-046：置信度分级；低置信（检索 top 分数过低）直接走拒答分支，省去 LLM 调用
+                double topScore = usedChunks.stream().mapToDouble(RetrieveChunk::getScore).max().orElse(0.0);
+                String confidence = confidenceLevel(topScore);
 
-                // 结束事件：sources + citations（句子级引用归因）+ usage + 完整 answer
-                ChatResponse chatResp = ChatResponse.of(answerBuf.toString(), sr.getModel(), 0, 0, usedChunks);
+                String answer;
+                String model;
+                int pTokens = 0, cTokens = 0, tTokens = 0;
+                if (topScore < lowConfidenceScore) {
+                    answer = LOW_CONFIDENCE_ANSWER;
+                    model = null;
+                } else {
+                    StringBuilder answerBuf = new StringBuilder();
+                    ChatService.StreamChatResult sr = chatService.streamChat(
+                            query, assembled.promptContext(), reqKbId, reqHistoryText,
+                            token -> { answerBuf.append(token); sendSse(emitter, "token", "token", token); },
+                            reasoning -> sendSse(emitter, "reasoning", "reasoning", reasoning));
+                    answer = answerBuf.toString();
+                    model = sr.getModel();
+                    pTokens = sr.getPromptTokens();
+                    cTokens = sr.getCompletionTokens();
+                    tTokens = sr.getTotalTokens();
+                }
+
+                // 结束事件：sources + citations + confidence + usage + 完整 answer
+                ChatResponse chatResp = ChatResponse.of(answer, model, pTokens, cTokens, usedChunks);
+                chatResp.setConfidence(confidence);
+                chatResp.setConfidenceScore(topScore);
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("type", "done");
-                done.put("model", sr.getModel());
-                done.put("answer", answerBuf.toString());
-                done.put("usage", Map.of("promptTokens", sr.getPromptTokens(),
-                        "completionTokens", sr.getCompletionTokens(),
-                        "totalTokens", sr.getTotalTokens()));
+                done.put("model", model);
+                done.put("answer", answer);
+                done.put("usage", Map.of("promptTokens", pTokens,
+                        "completionTokens", cTokens,
+                        "totalTokens", tTokens));
                 done.put("sources", chatResp.getSources());
                 done.put("citations", chatResp.getCitations());
+                done.put("confidence", confidence);
+                done.put("confidenceScore", topScore);
                 emitter.send(SseEmitter.event().name("done").data(done));
                 emitter.complete();
                 // RAG-044：持久化本轮对话到会话历史（即使后续留痕失败也不影响多轮）
                 if (reqSessionId != null) {
-                    historyService.append(reqSessionId, query, answerBuf.toString());
+                    historyService.append(reqSessionId, query, answer);
                 }
 
                 // 留痕（与同步路径一致）
@@ -180,23 +208,24 @@ public class ApiController {
                 trace.setKbId(reqKbId);
                 trace.setTenantId(reqTenantId);
                 trace.setQuestion(query);
-                trace.setAnswer(answerBuf.toString());
-                trace.setModel(sr.getModel());
+                trace.setAnswer(answer);
+                trace.setModel(model);
                 trace.setParams("topK=" + topK
                         + ",promptSource=stream"
+                        + ",confidence=" + confidence
                         + ",contextTokens=" + assembled.totalTokens()
                         + ",droppedDup=" + assembled.droppedByDup()
                         + ",droppedBudget=" + assembled.droppedByBudget());
                 trace.setSources(String.valueOf(usedChunks.size()));
                 trace.setTraceJson(String.format(
-                        "{\"query\":\"%s\",\"topK\":%d,\"retrieved\":%d,\"contextUsed\":%d,\"contextTokens\":%d,\"promptSource\":\"stream\",\"totalTokens\":%d}",
+                        "{\"query\":\"%s\",\"topK\":%d,\"retrieved\":%d,\"contextUsed\":%d,\"contextTokens\":%d,\"promptSource\":\"stream\",\"confidence\":\"%s\",\"totalTokens\":%d}",
                         escape(query), topK, chunks.size(), usedChunks.size(),
-                        assembled.totalTokens(), sr.getTotalTokens()));
+                        assembled.totalTokens(), confidence, tTokens));
                 trace.setCreatedAt(LocalDateTime.now());
                 qaTraceRepository.save(trace);
 
                 auditService.log("CHAT", "Query", String.valueOf(reqKbId), null,
-                        "topK=" + topK + ",sources=" + usedChunks.size() + ",stream=true",
+                        "topK=" + topK + ",sources=" + usedChunks.size() + ",stream=true,confidence=" + confidence,
                         reqTenantId, reqActor);
                 ragMetrics.recordChat(System.currentTimeMillis() - start);
             } catch (Exception e) {
@@ -226,22 +255,35 @@ public class ApiController {
 
             // 2. 上下文组装（RAG-041）
             ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
+            List<RetrieveChunk> usedChunks = assembled.used();
 
-            // 3. 调 LLM 生成回答（Prompt 模板外置，RAG-040）；historyText 注入多轮上下文
-            Map<String, Object> llmResult = chatService.chat(query, assembled.promptContext(), kbIdOf(ctx), historyText);
-            String answer = (String) llmResult.get("answer");
-            String model = (String) llmResult.get("model");
-            @SuppressWarnings("unchecked")
-            Map<String, Object> usageMap = (Map<String, Object>) llmResult.get("usage");
+            // RAG-046：置信度分级；低置信（检索 top 分数过低）走拒答分支，不调用 LLM
+            double topScore = usedChunks.stream().mapToDouble(RetrieveChunk::getScore).max().orElse(0.0);
+            String confidence = confidenceLevel(topScore);
+
+            String answer;
+            String model;
+            int pTokens = 0, cTokens = 0, tTokens = 0;
+            Map<String, Object> llmResult = null;
+            if (topScore < lowConfidenceScore) {
+                answer = LOW_CONFIDENCE_ANSWER;
+                model = null;
+            } else {
+                // 3. 调 LLM 生成回答（Prompt 模板外置，RAG-040）；historyText 注入多轮上下文
+                llmResult = chatService.chat(query, assembled.promptContext(), kbIdOf(ctx), historyText);
+                answer = (String) llmResult.get("answer");
+                model = (String) llmResult.get("model");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> usageMap = (Map<String, Object>) llmResult.get("usage");
+                pTokens = (int) usageMap.get("promptTokens");
+                cTokens = (int) usageMap.get("completionTokens");
+                tTokens = (int) usageMap.get("totalTokens");
+            }
 
             // 4. 构建响应
-            List<RetrieveChunk> usedChunks = assembled.used();
-            ChatResponse chatResponse = ChatResponse.of(
-                    answer, model,
-                    (int) usageMap.get("promptTokens"),
-                    (int) usageMap.get("completionTokens"),
-                    usedChunks
-            );
+            ChatResponse chatResponse = ChatResponse.of(answer, model, pTokens, cTokens, usedChunks);
+            chatResponse.setConfidence(confidence);
+            chatResponse.setConfidenceScore(topScore);
 
             // RAG-044：持久化本轮对话到会话历史
             if (sessionId != null) {
@@ -256,17 +298,22 @@ public class ApiController {
             trace.setAnswer(answer);
             trace.setModel(model);
             trace.setParams("topK=" + topK
-                    + ",promptSource=" + llmResult.get("promptSource")
+                    + (llmResult != null ? ",promptSource=" + llmResult.get("promptSource") : ",promptSource=low-confidence")
+                    + ",confidence=" + confidence
                     + ",contextTokens=" + assembled.totalTokens()
                     + ",droppedDup=" + assembled.droppedByDup()
                     + ",droppedBudget=" + assembled.droppedByBudget());
             trace.setSources(String.valueOf(usedChunks.size()));
-            trace.setTraceJson(buildTraceJson(query, topK, chunks, assembled, llmResult));
+            trace.setTraceJson(llmResult != null
+                    ? buildTraceJson(query, topK, chunks, assembled, llmResult)
+                    : String.format(
+                        "{\"query\":\"%s\",\"topK\":%d,\"retrieved\":%d,\"contextUsed\":%d,\"contextTokens\":%d,\"promptSource\":\"low-confidence\",\"confidence\":\"%s\",\"totalTokens\":0}",
+                        escape(query), topK, chunks.size(), usedChunks.size(), assembled.totalTokens(), confidence));
             trace.setCreatedAt(LocalDateTime.now());
             qaTraceRepository.save(trace);
 
             auditService.log("CHAT", "Query", String.valueOf(ctx.getKbId()), null,
-                    "topK=" + topK + ",sources=" + usedChunks.size(), ctx.getTenantId(), actorOf(ctx));
+                    "topK=" + topK + ",sources=" + usedChunks.size() + ",confidence=" + confidence, ctx.getTenantId(), actorOf(ctx));
             ragMetrics.recordChat(System.currentTimeMillis() - start);
             return Result.ok(chatResponse);
         } catch (Exception e) {
@@ -291,6 +338,22 @@ public class ApiController {
             sb.append("user".equals(t.role()) ? "用户：" : "助手：").append(t.content()).append("\n");
         }
         return sb.toString().strip();
+    }
+
+    /** RAG-046：低置信（未检索到相关资料）时的优雅拒答文案 */
+    private static final String LOW_CONFIDENCE_ANSWER =
+            "抱歉，我在当前知识库中未检索到与您问题相关的资料，因此无法给出可靠回答。"
+            + "您可以尝试：换一种表述、补充更具体的背景，或确认相关资料已成功入库。";
+
+    /** RAG-046：基于检索 top 分数的置信度分级 */
+    private String confidenceLevel(double topScore) {
+        if (topScore < lowConfidenceScore) {
+            return "low";
+        }
+        if (topScore < mediumConfidenceScore) {
+            return "medium";
+        }
+        return "high";
     }
 
     /** KB ID：供 Prompt 模板按 KB 选择（API Key 调用时来自 Key 绑定） */

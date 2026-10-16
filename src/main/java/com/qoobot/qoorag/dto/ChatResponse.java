@@ -17,6 +17,10 @@ public class ChatResponse {
     private List<SourceInfo> sources;
     /** RAG-042：句子级引用归因。每条对应答案中带 [n] 标记的一个句子，解析出所引用的来源 */
     private List<Citation> citations;
+    /** RAG-046：置信度等级 high/medium/low（基于检索 top 片段相似度） */
+    private String confidence;
+    /** RAG-046：检索 top 片段相似度（0~1），供前端展示与拒答决策 */
+    private Double confidenceScore;
 
     public ChatResponse() {}
 
@@ -190,4 +194,8 @@ public class ChatResponse {
     public void setSources(List<SourceInfo> sources) { this.sources = sources; }
     public List<Citation> getCitations() { return citations; }
     public void setCitations(List<Citation> citations) { this.citations = citations; }
+    public String getConfidence() { return confidence; }
+    public void setConfidence(String confidence) { this.confidence = confidence; }
+    public Double getConfidenceScore() { return confidenceScore; }
+    public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
 }

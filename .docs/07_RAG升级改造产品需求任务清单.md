@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026/046、RAG-051~055（RAG-043/042/044 已完成 ✅） | ❌ |
+| **M3 体验与成本** | RAG-022/025/026、RAG-051~055（RAG-043/042/044/046 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026/046），
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 **顺带修复的预存缺陷**：
@@ -354,7 +354,8 @@ flowchart TB
 | **RAG-044** | **多轮对话与指代消解** | P1 ✅ | 13d | ① 支持 `sessionId` 携带历史（最近 N 轮，可配）；② 追问类 query 先做指代消解再检索；③ 历史过长时自动压缩；④ 提供会话历史存储与 TTL 清理 | RAG-015 | 新增 `ChatSession` 实体、`ApiController` |
 | | *实现说明* | | | | | 后端落地：① `ApiController.chat` 支持 `sessionId`，请求线程内加载历史（`ChatHistoryService`）并调用 `ChatService.resolveQuery` 做 LLM 指代消解，检索使用消解后的独立 query、LLM 上下文注入历史；② 新增 `ChatHistoryService`（Redis 存储最近 N 轮，`qoorag.chat.session.max-turns`/`ttl-minutes` 可配，TTL 自动清理，无需定时任务）；③ `ChatService` 增加 `complete`（轻量纯 LLM 补全）、`resolveQuery`（指代消解）、`buildUserContent`（历史注入）及 `chat/streamChat` 的历史重载；④ 同步/流式两条路径均在答后回写历史。已验证：两轮对话中追问"它有哪些核心产品"被正确消解指向量子科技并检索到核心产品；Redis 落库 2 轮 4 条记录。③ 历史压缩沿用 max-turns 滑动窗口截断，未单独引入摘要压缩（如需语义压缩可后续增强）。 |
 | **RAG-045** | **LLM 调用超时/重试/降级** | P1 | 3d | ① Chat 调用接入 `HttpRetryUtil`（对齐 Embedding/Rerank 现有做法）与可配超时；② 失败时明确错误码与可重试标记；③ 记录重试次数到 trace | RAG-006 | `ChatService.java:90` |
-| **RAG-046** | **拒答与置信度表达** | P1 | 5d | ① 检索分数过低时走"低置信"分支：明确告知未找到，而非硬凑答案；② `ChatResponse` 增加置信度字段；③ 评测集上"应拒答"样本的拒答率 ≥ 80% | RAG-041、RAG-003 | `ApiController`、`ChatService` |
+| **RAG-046** | **拒答与置信度表达** | P1 ✅ | 5d | ① 检索分数过低时走"低置信"分支：明确告知未找到，而非硬凑答案；② `ChatResponse` 增加置信度字段；③ 评测集上"应拒答"样本的拒答率 ≥ 80% | RAG-041、RAG-003 | `ApiController`、`ChatService` |
+| | *实现说明* | | | | | 后端落地：① `ChatResponse` 增加 `confidence`（high/medium/low）与 `confidenceScore`（检索 top 相似度）；② `ApiController` 在上下文组装后计算 top 分数并分级（`qoorag.chat.low-confidence-score`=0.30 / `medium-confidence-score`=0.55）；③ 低置信时短路：直接返回优雅拒答文案、不调用 LLM（省成本且避免编造），同步/流式 `done` 事件均带 `confidence`+`confidenceScore`；④ 阈值可配。已验证：相关查询 confidence=high（score=0.57）正常回答；无关查询"如何做番茄炒蛋" score=0.19<0.30 → confidence=low 拒答，且流式路径 0 个 token/reasoning 帧（确认未调 LLM）。③ 验收依赖评测集量化，当前为功能验证。 |
 | **RAG-047** | **多模型/多 Provider 可插拔** | P2 | 13d | ① LLM/Embedding/Rerank 抽象为 Provider 接口，支持 OpenAI 兼容 + 本地 vLLM/Ollama；② 通过资源池配置切换，无需改代码 | RAG-100 | `BailianConfig`、`ResourcePoolLoader` |
 | **RAG-048** | **A/B 实验框架** | P2 | 8d | ① 支持同一 KB 上按流量比例对比两套配置（Prompt 版本 / 检索策略 / 模型）；② 实验指标自动统计并可对比 | RAG-040、RAG-013 | 新增实验配置与埋点 |
 
@@ -407,7 +408,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026/046），
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
 > 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
 
 ---

@@ -56,6 +56,8 @@ qoorag:
     session:
       max-turns: 10          # 会话历史保留的最大轮数（每轮=用户提问+助手回答）
       ttl-minutes: 1440      # 会话历史 Redis 留存时长（分钟），过期自动清理
+    low-confidence-score: 0.30     # RAG-046：检索 top 分数低于此值视为低置信，走拒答分支（省 LLM 调用）
+    medium-confidence-score: 0.55  # RAG-046：低于此值标 medium，否则 high
   # 内容安全（#18）：默认关闭；开启需配置阿里云密钥。关闭或异常时 fail-open 放行。
   content-safety:
     enabled: ${CONTENT_SAFETY_ENABLED:false}
