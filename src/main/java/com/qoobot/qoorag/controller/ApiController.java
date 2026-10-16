@@ -12,6 +12,7 @@ import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatHistoryService;
 import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.MmrService;
+import com.qoobot.qoorag.service.QueryTransformService;
 import com.qoobot.qoorag.service.ContextAssembler;
 import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
@@ -48,6 +49,7 @@ public class ApiController {
     private final AuditService auditService;
     private final ChatHistoryService historyService;
     private final MmrService mmrService;
+    private final QueryTransformService queryTransformService;
 
     /** RAG-043 流式问答专用线程池（守护线程，避免阻塞请求线程；CallerRuns 兜底防丢任务） */
     private final ExecutorService streamExecutor = new ThreadPoolExecutor(
@@ -66,6 +68,9 @@ public class ApiController {
     /** RAG-046：置信度分级阈值（低于为 medium，否则 high） */
     @Value("${qoorag.chat.medium-confidence-score:0.55}")
     private double mediumConfidenceScore;
+    /** RAG-015：检索前是否开启查询改写（默认关，避免未评估回归） */
+    @Value("${qoorag.retrieval.query-rewrite-enabled:false}")
+    private boolean queryRewriteEnabled;
 
     public ApiController(QaTraceRepository qaTraceRepository,
                          RetrieveService retrieveService,
@@ -75,7 +80,8 @@ public class ApiController {
                          MetricsConfig.RagMetrics ragMetrics,
                          AuditService auditService,
                          ChatHistoryService historyService,
-                         MmrService mmrService) {
+                         MmrService mmrService,
+                         QueryTransformService queryTransformService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
@@ -85,6 +91,7 @@ public class ApiController {
         this.auditService = auditService;
         this.historyService = historyService;
         this.mmrService = mmrService;
+        this.queryTransformService = queryTransformService;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -142,9 +149,17 @@ public class ApiController {
         final List<ChatHistoryService.Turn> history =
                 reqSessionId != null ? historyService.getHistory(reqSessionId) : List.of();
         final String reqHistoryText = history.isEmpty() ? "" : formatHistory(history);
-        // 检索使用指代消解后的独立 query；首轮或历史为空时退化为原 query
-        final String reqEffectiveQuery =
-                (reqSessionId != null && !history.isEmpty()) ? chatService.resolveQuery(query, reqHistoryText) : query;
+        // 检索用 query：多轮→指代消解（RAG-044）；单轮且开启改写→查询改写（RAG-015）；否则原 query
+        String effectiveQuery = query;
+        if (reqSessionId != null && !history.isEmpty()) {
+            effectiveQuery = chatService.resolveQuery(query, reqHistoryText);
+        } else if (queryRewriteEnabled) {
+            effectiveQuery = queryTransformService.rewrite(query);
+            if (!effectiveQuery.equals(query)) {
+                log.info("RAG-015 查询改写：'{}' -> '{}'", query, effectiveQuery);
+            }
+        }
+        final String reqEffectiveQuery = effectiveQuery;
 
         if (!stream) {
             return chatSync(query, topK, ctx, reqEffectiveQuery, reqHistoryText, reqSessionId);

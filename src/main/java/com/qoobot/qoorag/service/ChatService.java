@@ -304,8 +304,8 @@ public class ChatService {
         return historyText + "\n\n当前问题：" + query;
     }
 
-    /** 纯 LLM 补全（无检索），用于指代消解等轻量调用；失败返回 null（fail-soft） */
-    private String complete(String system, String user) {
+    /** 纯 LLM 补全（无检索），用于指代消解/查询改写等轻量调用；失败返回 null（fail-soft）。包级可见，供 QueryTransformService 复用 */
+    String complete(String system, String user) {
         try {
             List<Map<String, String>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", system));

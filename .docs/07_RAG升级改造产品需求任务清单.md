@@ -33,8 +33,7 @@
 | | RAG-041 上下文组装器 | ✅ |
 | **M3 体验与成本** | RAG-022/025/026、RAG-051~055（RAG-043/042/044/046 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046/018 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -303,7 +302,8 @@ flowchart TB
 | **RAG-013** | **检索策略可配置化与热切换** | P0 ✅ | 3d | ① 所有检索参数（fusion 模式、权重、候选池、min-score、topK、rerank top-n）支持**按 KB 配置并热生效**（当前 `overrideRerankConfig` 会污染全局单例，需修正为按 KB 上下文传参）；② 修正 `RetrieveService` 用可变字段承载请求级参数的线程安全问题 | RAG-012 | `RetrieveService.java:74-86` |
 | | *实现说明* | | | | | 新增不可变 `RetrievalStrategy` record，检索入口改为 `retrieve(query, topK, kbId, tenantId, strategy)` 显式传参，彻底消除共享可变状态的线程竞争；`overrideRerankConfig` 标 `@Deprecated` 仅兼容旧评估接口。**待办**：按 KB 持久化策略表 + 热加载（需 `kb_retrieval_config` 表，建议并入 RAG-014） |
 | **RAG-014** | **元数据过滤检索** | P1 | 5d | ① 支持按文档名/标签/时间范围/数据分级过滤召回；② 索引层保证过滤条件下仍能走 ANN（评估 partial index / 分区策略并写入文档） | RAG-020（元数据） | `RetrieveService`、`chunk` 表 |
-| **RAG-015** | **查询改写（Query Rewriting）** | **P1** | 5d | ① 提供 `rewrite` 开关，用轻量 LLM 将 query 改写为检索友好形式（补全指代、展开缩写）；② 默认关闭，评测集上开启后 Recall@5 提升 ≥ 3pp 方可默认开启；③ 改写失败/超时静默降级为原 query | RAG-000 | 新增 `QueryTransformService` |
+| **RAG-015** | **查询改写（Query Rewriting）** | **P1** ✅ | 5d | ① 提供 `rewrite` 开关，用轻量 LLM 将 query 改写为检索友好形式（补全指代、展开缩写）；② 默认关闭，评测集上开启后 Recall@5 提升 ≥ 3pp 方可默认开启；③ 改写失败/超时静默降级为原 query | RAG-000 | 新增 `QueryTransformService` |
+| | *实现说明* | | | | | 新增 `QueryTransformService.rewrite`（复用 `ChatService.complete` 轻量 LLM 补全，改写提示要求展开代词/拆分长问/保留实体）。在 `ApiController` 检索前接入：`qoorag.retrieval.query-rewrite-enabled` 开启且非多轮时改写 query；多轮场景由 RAG-044 的 `resolveQuery` 负责（避免重复 LLM 调用）。`complete` 改为包级可见供其复用。已验证：复合提问"量子科技是做什么的？它的核心产品和客户案例有哪些？"被改写为"量子科技的主要应用领域与业务方向"后检索，答案正确引用两片段。③ 验收依赖评测集量化，当前为功能验证。 |
 | **RAG-016** | **Multi-Query / RAG-Fusion** | P1 | 5d | ① 生成 3-5 个 query 变体并行检索，RRF 融合去重；② 开关默认关闭；③ 单次问答增加的成本与延迟可度量（写入 trace） | RAG-015、RAG-006 | `QueryTransformService` |
 | **RAG-017** | **HyDE 假设文档检索** | P2 | 3d | ① 先用 LLM 生成假设答案，再用其 embedding 检索；② 开关默认关闭，评测对比后决定是否默认启用 | RAG-015 | `QueryTransformService` |
 | **RAG-018** | **MMR 去冗余重排** | P1 ✅ | 3d | ① 在精排后、组装上下文前增加 MMR（λ 可配）；② 评测集上 Context Precision 提升 ≥ 3pp | RAG-012 | `RetrieveService` / 新增 `ContextAssembler` |
@@ -410,8 +410,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046/018 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055）。
 
 ---
 
