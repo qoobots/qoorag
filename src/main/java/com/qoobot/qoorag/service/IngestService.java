@@ -9,8 +9,11 @@ import com.qoobot.qoorag.entity.VectorData;
 import com.qoobot.qoorag.repository.ChunkRepository;
 import com.qoobot.qoorag.repository.DocumentRepository;
 import com.qoobot.qoorag.repository.VectorDataRepository;
+import com.qoobot.qoorag.store.ChunkVector;
+import com.qoobot.qoorag.store.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,6 +60,10 @@ public class IngestService {
     private final EmbeddingService embeddingService;
     private final ContentSafetyService contentSafety;
     private final ContextualChunkService contextualChunkService;
+
+    /** 向量存储抽象（RAG-068）：字段注入，避免破坏 7 参构造的单测；缺失时回退 vectorDataRepository */
+    @Autowired(required = false)
+    private VectorStore vectorStore;
 
     public IngestService(DocumentRepository documentRepository,
                          ChunkRepository chunkRepository,
@@ -222,18 +229,28 @@ public class IngestService {
             children = chunkRepository.saveAll(children);
 
             // 6.3 仅子块建向量（embeddings 与 drafts 顺序一致）
-            List<VectorData> vectors = new ArrayList<>(children.size());
+            //    经 VectorStore 抽象写入（RAG-068）；vectorStore 缺失时回退原 path
+            List<ChunkVector> chunkVectors = new ArrayList<>(children.size());
             for (int i = 0; i < children.size(); i++) {
-                VectorData vd = new VectorData();
-                vd.setChunkId(children.get(i).getId());
-                vd.setKbId(kbId);
-                vd.setTenantId(tenantId);
-                vd.setEmbeddingArray(embeddings.get(i));
-                vd.setCreatedAt(LocalDateTime.now());
-                vectors.add(vd);
+                chunkVectors.add(new ChunkVector(
+                        children.get(i).getId(), doc.getId(), kbId, tenantId, embeddings.get(i)));
             }
-            vectorDataRepository.saveAll(vectors);
-            log.info("入库完成：{} 个子块 / {} 个父块，{} 条向量", children.size(), parents.size(), vectors.size());
+            if (vectorStore != null) {
+                vectorStore.upsert(chunkVectors);
+            } else {
+                List<VectorData> vectors = new ArrayList<>(children.size());
+                for (int i = 0; i < children.size(); i++) {
+                    VectorData vd = new VectorData();
+                    vd.setChunkId(children.get(i).getId());
+                    vd.setKbId(kbId);
+                    vd.setTenantId(tenantId);
+                    vd.setEmbeddingArray(embeddings.get(i));
+                    vd.setCreatedAt(LocalDateTime.now());
+                    vectors.add(vd);
+                }
+                vectorDataRepository.saveAll(vectors);
+            }
+            log.info("入库完成：{} 个子块 / {} 个父块，{} 条向量", children.size(), parents.size(), chunkVectors.size());
             report(progress, IngestTask.STAGE_DONE, 100);
 
             // 6. 更新状态 = COMPLETED

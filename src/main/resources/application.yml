@@ -168,6 +168,7 @@ qoorag:
     max-judge-calls: 50      # 单次评测最大 judge 调用条数（成本保护）
   # 向量库索引参数（RAG-010）：HNSW ANN 索引由启动期 PgvectorIndexMigrator 幂等创建
   vector:
+    store: pgvector            # 向量存储后端：pgvector（默认）| milvus（RAG-068，待实现）
     hnsw:
       m: 16               # HNSW 每节点最大连接数（构建期参数，改后需 REINDEX）
       ef-construction: 128 # HNSW 构建期搜索宽度（构建期参数，改后需 REINDEX）

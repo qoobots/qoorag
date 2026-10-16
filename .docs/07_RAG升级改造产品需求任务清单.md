@@ -399,7 +399,7 @@ flowchart TB
 | **RAG-065** | **Listwise / Reranker 集成重排** | P2 | 8d | 以 LLM listwise 重排或 cross-encoder + LLM 集成提升 Precision | RAG-012 | ✅设计 |
 | **RAG-066** | **ColPali 视觉文档检索** | P2 | 13d | 页面图像多向量 MaxSim，跳过 OCR→版面→切块脆弱管线 | RAG-028 | ✅设计 |
 | **RAG-067** | **在线反馈学习闭环** | P2 | 8d | 点赞/点踩沉淀 badcase → 自动回灌评测集 → 驱动参数/Prompt 自优化 | RAG-007、RAG-000 | ✅设计 |
-| **RAG-068** | **向量存储可插拔 · Milvus 支持** | P2 | 13d | 抽出 VectorStore 抽象，保留 pgvector 实现，新增 Milvus 实现（collection / cosine / HNSW），按 `qoorag.vector.store` 切换；改造 RetrieveService / IngestService，迁移器仅对 pgvector 生效 | RAG-010、RAG-020 | ✅设计 |
+| **RAG-068** | **向量存储可插拔 · Milvus 支持** | P2 | 13d | 抽出 VectorStore 抽象，保留 pgvector 实现，新增 Milvus 实现（collection / cosine / HNSW），按 `qoorag.vector.store` 切换；改造 RetrieveService / IngestService，迁移器仅对 pgvector 生效 | RAG-010、RAG-020 | ✅设计（骨架已实现） |
 
 > **状态说明**：以上 9 项均已完成**设计态**（目标 / 业界方案 / 与现有架构接入点 / 取舍 / 验收计划 / 依赖与风险），统一见 [`.docs/08_EPIC6_frontier_design.md`](.docs/08_EPIC6_frontier_design.md)（RAG-060~067）与 [`.docs/09_milvus_vector_store.md`](.docs/09_milvus_vector_store.md)（RAG-068）。落地需 Graph DB / VLM / OCR / Milvus 等基建，建议按优先级排期，而非一次性全做。
 

@@ -1,43 +1,17 @@
 package com.qoobot.qoorag.service;
 
-import com.qoobot.qoorag.repository.ChunkRepository;
-import com.qoobot.qoorag.repository.DocumentRepository;
-import com.qoobot.qoorag.repository.VectorDataRepository;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.when;
 
-/** IngestService 单元测试：重点覆盖纯逻辑分块 splitText（仓库/Embedding 均 mock） */
-@ExtendWith(MockitoExtension.class)
+/** IngestService 单元测试：重点覆盖纯逻辑分块 splitText（不使用 Mockito，规避 JDK25 限制） */
 public class IngestServiceTest {
 
-    @Mock DocumentRepository documentRepository;
-    @Mock ChunkRepository chunkRepository;
-    @Mock VectorDataRepository vectorDataRepository;
-    @Mock EmbeddingService embeddingService;
-    @Mock ContentSafetyService contentSafety;
-    @Mock ContextualChunkService contextualChunkService;
-
-    private IngestService service;
-
-    @BeforeEach
-    void setUp() {
-        lenient().when(contentSafety.checkText(any())).thenReturn(ContentSafetyService.Result.safe());
-        // Contextual Chunking 默认关闭：前缀为 null，embedding 文本即原文
-        lenient().when(contextualChunkService.isEnabled()).thenReturn(false);
-        lenient().when(contextualChunkService.embeddingText(any(), any())).thenAnswer(inv -> inv.getArgument(0));
-        service = new IngestService(documentRepository, chunkRepository, vectorDataRepository,
-                new DocumentParserService(), embeddingService, contentSafety, contextualChunkService);
-    }
+    // splitText 为纯逻辑，不依赖任何仓储/服务，故以 null 构造即可
+    private final IngestService service =
+            new IngestService(null, null, null, null, null, null, null);
 
     @Test
     void splitText_blank_returns_empty() {

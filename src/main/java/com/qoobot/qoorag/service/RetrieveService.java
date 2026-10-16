@@ -1,22 +1,14 @@
 package com.qoobot.qoorag.service;
 
-import com.pgvector.PGvector;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.KnowledgeBase;
 import com.qoobot.qoorag.repository.KnowledgeBaseRepository;
+import com.qoobot.qoorag.store.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.jdbc.core.ConnectionCallback;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -56,7 +48,7 @@ public class RetrieveService {
 
     private static final Logger log = LoggerFactory.getLogger(RetrieveService.class);
 
-    private final JdbcTemplate jdbcTemplate;
+    private final VectorStore vectorStore;
     private final EmbeddingService embeddingService;
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final LexicalSearchService lexicalSearchService;
@@ -86,11 +78,11 @@ public class RetrieveService {
     @Value("${qoorag.vector.hnsw.ef-search:40}")
     private int hnswEfSearch;
 
-    public RetrieveService(JdbcTemplate jdbcTemplate,
+    public RetrieveService(VectorStore vectorStore,
                            EmbeddingService embeddingService,
                            KnowledgeBaseRepository knowledgeBaseRepository,
                            LexicalSearchService lexicalSearchService) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.vectorStore = vectorStore;
         this.embeddingService = embeddingService;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
         this.lexicalSearchService = lexicalSearchService;
@@ -185,7 +177,7 @@ public class RetrieveService {
 
         // 3. 向量路召回（候选池 >= topK，便于重排阶段有更全的候选）
         int cand = (effective.candidatePool() > 0) ? Math.max(effective.candidatePool(), topK) : topK;
-        List<RetrieveChunk> vectorCands = queryVectorDb(queryVec, cand, kbId, tenantId);
+        List<RetrieveChunk> vectorCands = vectorStore.querySimilar(queryVec, cand, kbId, tenantId);
         if (vectorCands.isEmpty()) {
             return vectorCands;
         }
@@ -216,81 +208,6 @@ public class RetrieveService {
         }
         log.info("检索完成，返回 {} 条结果（kbId={}, mode={}）", result.size(), kbId, mode);
         return result;
-    }
-
-    /**
-     * pgvector 余弦相似度检索（native SQL，{@code <=>} 算子）。
-     * <p>
-     * HNSW ANN 索引生效时，通过会话级 GUC {@code hnsw.ef_search} 控制召回宽度（RAG-010）。
-     * 该 GUC 必须作用于「同一条连接的同一次事务」，否则不会生效或被连接池复用污染：
-     * 因此这里手动开事务并 {@code SET LOCAL}，事务提交后自动失效。
-     */
-    private List<RetrieveChunk> queryVectorDb(float[] queryVec, int limit, Long kbId, Long tenantId) {
-        String sql = "SELECT v.id, v.chunk_id, c.document_id, c.seq, c.content, "
-                + "c.heading_path, c.page_no, c.chunk_type, c.parent_chunk_id, d.name AS document_name, "
-                + "1 - (v.embedding <=> ?) AS similarity "
-                + "FROM vector_data v JOIN chunk c ON c.id = v.chunk_id "
-                + "JOIN document d ON d.id = c.document_id "
-                + "WHERE v.kb_id = ? AND v.tenant_id = ? "
-                + "ORDER BY v.embedding <=> ? LIMIT ?";
-
-        PGvector qv = new PGvector(queryVec);
-        RowMapper<RetrieveChunk> rowMapper = (rs, rn) -> {
-            RetrieveChunk c = new RetrieveChunk(
-                    rs.getLong("id"),
-                    rs.getLong("chunk_id"),
-                    rs.getLong("document_id"),
-                    rs.getInt("seq"),
-                    rs.getString("content"),
-                    rs.getDouble("similarity"));
-            c.setHeadingPath(rs.getString("heading_path"));
-            c.setPageNo(rs.getObject("page_no") != null ? rs.getInt("page_no") : null);
-            c.setChunkType(rs.getString("chunk_type"));
-            c.setDocumentName(rs.getString("document_name"));
-            c.setParentChunkId(rs.getObject("parent_chunk_id", Long.class)); // RAG-022：父子块回填
-            return c;
-        };
-
-        return jdbcTemplate.execute((ConnectionCallback<List<RetrieveChunk>>) con -> {
-            boolean prevAutoCommit = con.getAutoCommit();
-            List<RetrieveChunk> out = new ArrayList<>();
-            try {
-                con.setAutoCommit(false);
-                if (hnswEfSearch > 0) {
-                    try (Statement st = con.createStatement()) {
-                        st.execute("SET LOCAL hnsw.ef_search = " + hnswEfSearch);
-                    }
-                }
-                try (PreparedStatement ps = con.prepareStatement(sql)) {
-                    ps.setObject(1, qv);
-                    ps.setLong(2, kbId);
-                    ps.setLong(3, tenantId);
-                    ps.setObject(4, qv);
-                    ps.setInt(5, limit);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        int rowNum = 0;
-                        while (rs.next()) {
-                            out.add(rowMapper.mapRow(rs, ++rowNum));
-                        }
-                    }
-                }
-                con.commit();
-            } catch (SQLException e) {
-                try {
-                    con.rollback();
-                } catch (SQLException ignored) {
-                    // 回滚失败时保留原始异常
-                }
-                throw new DataAccessResourceFailureException("向量检索执行失败: " + e.getMessage(), e);
-            } finally {
-                try {
-                    con.setAutoCommit(prevAutoCommit);
-                } catch (SQLException ignored) {
-                    // 连接状态恢复失败不影响返回结果
-                }
-            }
-            return out;
-        });
     }
 
     // ===== 混合检索：向量 + 词法 RRF 融合（RAG-011 / RAG-012）=====
