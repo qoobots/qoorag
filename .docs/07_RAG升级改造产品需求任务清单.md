@@ -34,7 +34,7 @@
 | **M3 体验与成本** | RAG-022/025/026、RAG-051~055（RAG-043/042/044/046 已完成 ✅） | ❌ |
 
 > **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
+> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -367,7 +367,8 @@ flowchart TB
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
-| **RAG-050** | **Embedding 缓存** | P1 | 3d | ① 按 `sha256(text + model)` 缓存 embedding（Redis，TTL 可配）；② 重复文档/重复 query 命中缓存；③ 缓存命中率可观测 | — | `EmbeddingService` |
+| **RAG-050** | **Embedding 缓存** | P1 ✅ | 3d | ① 按 `sha256(text + model)` 缓存 embedding（Redis，TTL 可配）；② 重复文档/重复 query 命中缓存；③ 缓存命中率可观测 | — | `EmbeddingService` |
+| | *实现说明* | | | | | `EmbeddingService.embedBatch` 逐条查缓存（`qoorag:emb:{sha256(text|model)}`），仅对未命中分批调 API 并回写（TTL `qoorag.embedding.cache-ttl-minutes`，默认 1440min）；`cache-enabled` 可关闭。覆盖入库与查询两条路径。已验证：同 query 二次检索 `命中=1/1`，Redis 落库且结果一致。 |
 | **RAG-051** | **查询结果缓存** | P1 | 5d | ① 相同 KB + 相同 query + 相同策略参数的结果缓存（TTL 默认 5min，可配）；② 支持按 KB 开关；③ 文档变更时主动失效该 KB 缓存 | RAG-030 | `RetrieveService` |
 | **RAG-052** | **批量与并发优化** | P1 | 5d | ① Embedding 批量大小与并发度可配（当前硬编码 `min(batchSize,25)`）；② 入库吞吐提升至 ≥ 200 页/分钟 | RAG-030 | `EmbeddingService.java:43` |
 | **RAG-053** | **成本与用量埋点** | P1 | 5d | ① 按 KB/API Key 统计 embedding tokens、rerank 次数、LLM tokens 与费用估算；② 管理端可查用量报表 | RAG-006 | `MetricsConfig`、新增统计表 |
@@ -409,7 +410,7 @@ flowchart TB
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
 > **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR / RAG-050 缓存）。
+> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR）。
 
 ---
 
