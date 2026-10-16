@@ -264,3 +264,22 @@ INSERT INTO resource_pool_config (category, config_key, config_value, masked, de
     ('VECTOR',     'type',                '', false, '向量库类型（当前固定 pgvector）'),
     ('VECTOR',     'dimension',           '', false, '向量维度（留空则按 embedding 模型自动推导：v3/v4=1024，v1/v2/async=1536；也可显式指定）')
     ON CONFLICT (category, config_key) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- 用量与成本统计表（RAG-053）：按 日期+租户+KB+密钥指纹+指标类型 聚合每日用量
+-- kb_id 取 -1 表示「未归属到具体 KB」（embedding / rerank 等跨 KB 基础设施调用）
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS usage_stat (
+    id           BIGSERIAL PRIMARY KEY,
+    stat_date    DATE         NOT NULL,
+    tenant_id    BIGINT       NOT NULL,
+    kb_id        BIGINT       NOT NULL DEFAULT -1,
+    api_key_ref  VARCHAR(64)  NOT NULL,
+    metric_type  VARCHAR(20)  NOT NULL,
+    call_count   BIGINT       NOT NULL DEFAULT 0,
+    tokens       BIGINT       NOT NULL DEFAULT 0,
+    est_cost     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    updated_at   TIMESTAMP    DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_stat_uniq
+    ON usage_stat (stat_date, tenant_id, kb_id, api_key_ref, metric_type);

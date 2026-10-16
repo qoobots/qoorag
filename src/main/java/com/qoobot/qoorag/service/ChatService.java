@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qoobot.qoorag.common.BizException;
 import com.qoobot.qoorag.common.ErrorCode;
+import com.qoobot.qoorag.common.TenantContext;
 import com.qoobot.qoorag.config.BailianConfig;
 import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.entity.PromptTemplate;
@@ -42,17 +43,20 @@ public class ChatService {
     private final ContentSafetyService contentSafety;
     private final PromptTemplateService promptTemplateService;
     private final MetricsConfig.RagMetrics ragMetrics;
+    private final UsageStatService usageStat;
 
     public ChatService(RestTemplate restTemplate,
                        BailianConfig config,
                        ContentSafetyService contentSafety,
                        PromptTemplateService promptTemplateService,
-                       MetricsConfig.RagMetrics ragMetrics) {
+                       MetricsConfig.RagMetrics ragMetrics,
+                       UsageStatService usageStat) {
         this.restTemplate = restTemplate;
         this.config = config;
         this.contentSafety = contentSafety;
         this.promptTemplateService = promptTemplateService;
         this.ragMetrics = ragMetrics;
+        this.usageStat = usageStat;
     }
 
     /**
@@ -143,6 +147,8 @@ public class ChatService {
             result.put("promptTemplateId", tpl.templateId());
             result.put("promptVersion", tpl.version());
             ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, true);
+            // RAG-053：LLM 用量按 KB 归因（kbId 为 null 时记为租户级）
+            recordLlmUsage(promptTokens, completionTokens, kbId);
             return result;
 
         } catch (Exception e) {
@@ -281,6 +287,8 @@ public class ChatService {
 
         log.info("Chat 流式完成，model={} tokens(p={} c={} t={})", model, promptTokens, completionTokens, totalTokens);
         ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, true);
+        // RAG-053：流式 LLM 用量按 KB 归因（kbId 为 null 时记为租户级）
+        recordLlmUsage(promptTokens, completionTokens, kbId);
         return new StreamChatResult(model, promptTokens, completionTokens, totalTokens);
     }
 
@@ -341,11 +349,41 @@ public class ChatService {
                 return null;
             }
             Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+            // RAG-053：轻量 LLM 调用（指代消解/改写）也计入用量（租户级，kbId 为 null）
+            int p = 0, c = 0;
+            Object u = b.get("usage");
+            if (u instanceof Map) {
+                Map<?, ?> um = (Map<?, ?>) u;
+                if (um.get("prompt_tokens") instanceof Number) {
+                    p = ((Number) um.get("prompt_tokens")).intValue();
+                }
+                if (um.get("completion_tokens") instanceof Number) {
+                    c = ((Number) um.get("completion_tokens")).intValue();
+                }
+            }
+            recordLlmUsage(p, c, null);
             return (String) message.get("content");
         } catch (Exception e) {
             log.warn("指代消解 LLM 调用失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    // ===== RAG-053：LLM 用量埋点辅助 =====
+
+    /** 统一记录 LLM token 用量到 Prometheus 计数与按 KB 的用量统计（kbId 为 null 时记租户级） */
+    private void recordLlmUsage(int promptTokens, int completionTokens, Long kbId) {
+        ragMetrics.recordLlmTokens(promptTokens, completionTokens);
+        usageStat.recordLlm(TenantContext.get(), kbId, maskKey(config.getChatApiKey()), promptTokens, completionTokens);
+    }
+
+    /** 密钥指纹：仅保留角色 + 末 4 位，不落明文 */
+    private static String maskKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "chat:none";
+        }
+        String tail = key.length() <= 4 ? key : key.substring(key.length() - 4);
+        return "chat:****" + tail;
     }
 
     /** RAG-043：流式问答结果（增量已通过回调送出，这里只回传结束时的元信息） */

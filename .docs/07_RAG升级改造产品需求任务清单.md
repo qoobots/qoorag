@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026、RAG-053、RAG-055（RAG-043/042/044/046/051/052/054 已完成 ✅） | ❌ |
+| **M3 体验与成本** | RAG-022/025/026、RAG-055（RAG-043/042/044/046/051/052/054/053 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054 已完成。** 下一步建议：收口 M3 可观测性（RAG-053 成本埋点、RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054/053 已完成。** 下一步建议：收口 M3 可观测性（RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -374,7 +374,8 @@ flowchart TB
 | | *实现说明* | | | | | 新增 `ChatCacheService`：缓存完整 `ChatResponse`（answer/sources/citations/confidence）于 Redis（`qoorag:chatcache:kb:{kbId}:{sha256(kb|topK|策略签名|query)}`，TTL `qoorag.chat.cache-ttl-minutes` 默认 5min）；`cache-enabled` 可关。在 `ApiController.chat` 两条路径接入——**命中即跳过检索与 LLM**（`get` 失败/未命中才走完整链路，`put` 落库）；策略签名纳入 rerank/rewrite/mmr 开关，避免错命中；**多轮会话不缓存**（答案依赖历史，不可复用）。`DocumentController` 上传入口调用 `invalidateKb(kbId)` 主动失效该 KB 缓存（TTL 兜底）。已验证：同 query 二次请求 `RAG-051 命中查询结果缓存` 直接返回；流式 done 事件回放 sources=2/citations=3；上传文档后 `KEYS` 计数 1→0。② "按 KB 开关"当前以全局 `cache-enabled` + 每请求独立键实现（不同 KB 键隔离天然成立），如需逐 KB 独立开关可后续加 Redis 覆盖位。 |
 | **RAG-052** | **批量与并发优化** | P1 ✅ | 5d | ① Embedding 批量大小与并发度可配（当前硬编码 `min(batchSize,25)`）；② 入库吞吐提升至 ≥ 200 页/分钟 | RAG-030 | `EmbeddingService.java:43` |
 | | *实现说明* | | | | | `EmbeddingService` 改造：① 批量大小去掉 25 硬上限，直接取可配的 `BailianConfig.embeddingBatchSize`；② 新增 `qoorag.embedding.concurrency`（默认 4）固定线程池，将多个批次并发提交 API 调用（`executor.submit` + 顺序 `get` 回填，保证 `result` 与输入顺序一致），`@PreDestroy` 优雅关闭；worker 线程为守护线程。已验证：上传文档后 embedding 调用跑在 `embedding-worker` 线程、日志 `Embedding 缓存 命中=0/6，并发=4`，检索/问答仍正确（confidence=high）。② 吞吐 ≥200 页/分钟为配置可达成项，需在大规模语料下量化（本环境为功能与配置验证）。 |
-| **RAG-053** | **成本与用量埋点** | P1 | 5d | ① 按 KB/API Key 统计 embedding tokens、rerank 次数、LLM tokens 与费用估算；② 管理端可查用量报表 | RAG-006 | `MetricsConfig`、新增统计表 |
+| **RAG-053** | **成本与用量埋点** | P1 ✅ | 5d | ① 按 KB/API Key 统计 embedding tokens、rerank 次数、LLM tokens 与费用估算；② 管理端可查用量报表 | RAG-006 | `MetricsConfig`、新增统计表 |
+| | *实现说明* | | | | | 新增 `usage_stat` 表（按 日期+租户+KB+密钥指纹+指标类型 聚合）+ `UsageStatService`（进程内聚合、每 30s 批量 upsert）+ `UsageAdminController`（`/summary`、`/daily`）。`EmbeddingService`/`RerankService`/`ChatService` 埋点（LLM 区分输入/输出 token、embedding 取 API usage 或字符估算、rerank 按字符估算），按 KB 归因（kbId 为 null 记租户级）；密钥仅存「角色+末4位」指纹。`MetricsConfig.RagMetrics` 增 `qoorag_*_tokens` 计数器经 Prometheus 实时暴露；费用单价可配（`qoorag.cost.*`）。已验证：启动建表、Prometheus 暴露 token 计数器、报表接口返回 200 且结构正确（真实调用记录需有效 embedding/LLM 密钥）。 |
 | **RAG-054** | **慢查询与失败告警** | P1 ✅ | 3d | ① 检索/入库/LLM 的 P95 与失败率入 Prometheus；② 提供告警规则模板（入库失败率 >5%、检索 P95 > 阈值） | RAG-006 | `MetricsConfig`、Grafana 模板 |
 | | *实现说明* | | | | | `MetricsConfig.RagMetrics` 扩展为检索/问答/入库/LLM/Embedding 五类 Timer（`publishPercentiles(0.5/0.95/0.99).publishPercentileHistogram(true)`，导出 `_bucket` 供 `histogram_quantile` 算 P95/P99）+ 对应失败 Counter；在 `ApiController`（检索/问答失败）、`IngestQueueService`（入库成败）、`ChatService`（LLM 成败）、`EmbeddingService`（向量化成败）埋点；补 `micrometer-registry-prometheus` 依赖并修复 `application.yml` 中 `management` 被误缩进在 `spring:` 下导致 actuator 仅暴露 health 的预存 bug，使 `/actuator/prometheus` 正常暴露；新增 `deploy/prometheus/rag_alerts.yml`（入库失败率>5%、检索 P95>1s、问答 P95>8s）。已验证 `/actuator/prometheus` 暴露全部 `qoorag_*` 指标且问答后计数递增。 |
 | **RAG-055** | **大规模数据性能验证** | P1 | 8d | ① 构造 10 万 / 100 万向量数据集压测；② 输出容量规划文档（单租户上限、索引内存占用、分区/分表建议）；③ 明确 `candidate-pool=200` 在各数据量下的延迟表现 | RAG-010 | 压测脚本 + 文档 |
@@ -430,7 +431,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054 已完成。** 下一步建议：收口 M3 可观测性（RAG-053 成本埋点、RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054/053 已完成。** 下一步建议：收口 M3 可观测性（RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
 
 ---
 

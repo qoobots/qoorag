@@ -43,6 +43,12 @@ public class MetricsConfig {
         private final Counter embeddingSuccess;
         private final Counter embeddingFailures;
 
+        // RAG-053：token 用量计数（按类型），便于实时观测与成本趋势
+        private final Counter embeddingTokens;
+        private final Counter rerankTokens;
+        private final Counter llmPromptTokens;
+        private final Counter llmCompletionTokens;
+
         public RagMetrics(MeterRegistry registry) {
             this.retrieveTimer = Timer.builder("qoorag.retrieve.latency")
                     .description("检索接口延迟").publishPercentiles(0.5, 0.95, 0.99).publishPercentileHistogram(true).register(registry);
@@ -77,6 +83,28 @@ public class MetricsConfig {
                     .description("Embedding 调用成功次数").register(registry);
             this.embeddingFailures = Counter.builder("qoorag.embedding.failures")
                     .description("Embedding 调用失败次数").register(registry);
+
+            this.embeddingTokens = Counter.builder("qoorag.embedding.tokens")
+                    .description("Embedding 消耗 token 数").register(registry);
+            this.rerankTokens = Counter.builder("qoorag.rerank.tokens")
+                    .description("Rerank 消耗 token 数（估算）").register(registry);
+            this.llmPromptTokens = Counter.builder("qoorag.llm.prompt.tokens")
+                    .description("LLM 输入 token 数").register(registry);
+            this.llmCompletionTokens = Counter.builder("qoorag.llm.completion.tokens")
+                    .description("LLM 输出 token 数").register(registry);
+        }
+
+        public void recordEmbeddingTokens(long tokens) {
+            embeddingTokens.increment(tokens);
+        }
+
+        public void recordRerankTokens(long tokens) {
+            rerankTokens.increment(tokens);
+        }
+
+        public void recordLlmTokens(long promptTokens, long completionTokens) {
+            llmPromptTokens.increment(promptTokens);
+            llmCompletionTokens.increment(completionTokens);
         }
 
         public void recordRetrieve(long millis, boolean hasHit) {

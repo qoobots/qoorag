@@ -1,6 +1,8 @@
 package com.qoobot.qoorag.service;
 
+import com.qoobot.qoorag.common.TenantContext;
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.common.HttpRetryUtil;
 import com.qoobot.qoorag.dto.RetrieveChunk;
 import org.slf4j.Logger;
@@ -35,6 +37,8 @@ public class RerankService {
 
     private final RestTemplate restTemplate;
     private final BailianConfig config;
+    private final UsageStatService usageStat;
+    private final MetricsConfig.RagMetrics ragMetrics;
 
     @Value("${qoorag.retrieval.rerank.enabled:false}")
     private boolean enabled;
@@ -66,9 +70,12 @@ public class RerankService {
     /** 单次 rerank 的最大文档数（百炼限制保护，超出部分不精排、原序追加） */
     private static final int MAX_DOCS = 100;
 
-    public RerankService(RestTemplate restTemplate, BailianConfig config) {
+    public RerankService(RestTemplate restTemplate, BailianConfig config,
+                         UsageStatService usageStat, MetricsConfig.RagMetrics ragMetrics) {
         this.restTemplate = restTemplate;
         this.config = config;
+        this.usageStat = usageStat;
+        this.ragMetrics = ragMetrics;
     }
 
     public boolean isEnabled() { return enabled; }
@@ -90,7 +97,16 @@ public class RerankService {
      * @param candidates 召回阶段返回的候选（已按召回相关性降序）
      * @return 精排后截断到 top-n 的候选；未开启或无需精排时原样返回
      */
+    /** 精排入口（不归属具体 KB，记为租户级用量） */
     public List<RetrieveChunk> rerank(String query, List<RetrieveChunk> candidates) {
+        return rerank(query, candidates, null);
+    }
+
+    /**
+     * 对召回候选做精排并返回截断后的结果。
+     * <p>RAG-053：kbId 用于用量按 KB 归因（为 null 表示租户级）。
+     */
+    public List<RetrieveChunk> rerank(String query, List<RetrieveChunk> candidates, Long kbId) {
         if (!enabled || candidates == null || candidates.isEmpty()) {
             return candidates;
         }
@@ -207,6 +223,10 @@ public class RerankService {
             if (out.size() > topN) {
                 out = out.subList(0, topN);
             }
+            int tokens = estimateRerankTokens(query, toRerank);
+            ragMetrics.recordRerankTokens(tokens);
+            // RAG-053：rerank 用量按 KB 归因（kbId 为 null 时记为租户级）
+            usageStat.recordRerank(TenantContext.get(), kbId, maskKey(resolveApiKey()), tokens);
             log.info("精排完成，候选 {} -> 返回 {}", candidates.size(), out.size());
             return out;
         } catch (Exception e) {
@@ -219,5 +239,30 @@ public class RerankService {
     private List<RetrieveChunk> fallback(List<RetrieveChunk> candidates, String reason) {
         log.warn("Rerank 降级：{}，返回 {} 条原始候选", reason, candidates.size());
         return candidates;
+    }
+
+    // ===== RAG-053：rerank 用量埋点辅助 =====
+
+    /** 密钥指纹：仅保留角色 + 末 4 位，不落明文 */
+    private static String maskKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "rerank:none";
+        }
+        String tail = key.length() <= 4 ? key : key.substring(key.length() - 4);
+        return "rerank:****" + tail;
+    }
+
+    /** rerank token 估算：query + 候选文档字符数 /4（rerank 接口通常不回传 usage） */
+    private static int estimateRerankTokens(String query, List<RetrieveChunk> docs) {
+        int chars = query == null ? 0 : query.length();
+        if (docs != null) {
+            for (RetrieveChunk c : docs) {
+                String content = c.getContent();
+                if (content != null) {
+                    chars += content.length();
+                }
+            }
+        }
+        return Math.max(1, chars / 4);
     }
 }

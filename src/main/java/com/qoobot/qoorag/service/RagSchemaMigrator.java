@@ -225,6 +225,22 @@ public class RagSchemaMigrator implements ApplicationRunner {
                 CREATE INDEX IF NOT EXISTS idx_eval_run_kb ON eval_run(kb_id, tenant_id);
                 CREATE INDEX IF NOT EXISTS idx_eval_run_dataset ON eval_run(dataset_id);
                 """);
+        step("usage_stat 用量与成本统计表（RAG-053）", """
+                CREATE TABLE IF NOT EXISTS usage_stat (
+                    id           BIGSERIAL PRIMARY KEY,
+                    stat_date    DATE NOT NULL,
+                    tenant_id    BIGINT NOT NULL,
+                    kb_id        BIGINT NOT NULL DEFAULT -1,
+                    api_key_ref  VARCHAR(64) NOT NULL,
+                    metric_type  VARCHAR(20) NOT NULL,
+                    call_count   BIGINT NOT NULL DEFAULT 0,
+                    tokens       BIGINT NOT NULL DEFAULT 0,
+                    est_cost     DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updated_at   TIMESTAMP DEFAULT now()
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_stat_uniq
+                    ON usage_stat (stat_date, tenant_id, kb_id, api_key_ref, metric_type);
+                """);
     }
 
     /** 单步执行，失败只告警不阻断启动 */

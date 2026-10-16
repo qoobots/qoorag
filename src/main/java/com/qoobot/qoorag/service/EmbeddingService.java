@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qoobot.qoorag.common.TenantContext;
 import com.qoobot.qoorag.config.BailianConfig;
 import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.common.HttpRetryUtil;
@@ -44,11 +45,13 @@ public class EmbeddingService {
     private final int concurrency;
     private final ExecutorService executor;
     private final MetricsConfig.RagMetrics ragMetrics;
+    private final UsageStatService usageStat;
 
     public EmbeddingService(RestTemplate restTemplate,
                             BailianConfig config,
                             org.springframework.data.redis.core.StringRedisTemplate redis,
                             MetricsConfig.RagMetrics ragMetrics,
+                            UsageStatService usageStat,
                             @Value("${qoorag.embedding.cache-enabled:true}") boolean cacheEnabled,
                             @Value("${qoorag.embedding.cache-ttl-minutes:1440}") int cacheTtlMinutes,
                             @Value("${qoorag.embedding.concurrency:4}") int concurrency) {
@@ -56,6 +59,7 @@ public class EmbeddingService {
         this.config = config;
         this.redis = redis;
         this.ragMetrics = ragMetrics;
+        this.usageStat = usageStat;
         this.cacheEnabled = cacheEnabled;
         this.cacheTtl = Duration.ofMinutes(cacheTtlMinutes);
         this.concurrency = Math.max(1, concurrency);
@@ -68,9 +72,14 @@ public class EmbeddingService {
                 });
     }
 
-    /** 单文本向量化 */
+    /** 单文本向量化（不归属具体 KB） */
     public float[] embed(String text) {
-        float[][] result = embedBatch(Collections.singletonList(text));
+        return embed(text, null);
+    }
+
+    /** 单文本向量化（归属到指定 KB 用于用量统计） */
+    public float[] embed(String text, Long kbId) {
+        float[][] result = embedBatch(Collections.singletonList(text), kbId);
         return result.length > 0 ? result[0] : new float[0];
     }
 
@@ -79,6 +88,15 @@ public class EmbeddingService {
      * RAG-050：先逐条查缓存，仅对未命中部分调用 API，命中结果写回缓存。
      */
     public float[][] embedBatch(List<String> texts) {
+        return embedBatch(texts, null);
+    }
+
+    /**
+     * 批量向量化（按批次并发调用 API），自动按 batchSize 分批。
+     * RAG-050：先逐条查缓存，仅对未命中部分调用 API，命中结果写回缓存。
+     * RAG-053：传入 kbId 用于用量按 KB 归因（为 null 表示租户级）。
+     */
+    public float[][] embedBatch(List<String> texts, Long kbId) {
         if (texts == null || texts.isEmpty()) {
             return new float[0][];
         }
@@ -115,7 +133,7 @@ public class EmbeddingService {
             // RAG-052：并发提交各批次 API 调用（callApi 返回 float[][]，每批多向量）
             List<Future<float[][]>> futures = new ArrayList<>(batches.size());
             for (List<String> batch : batches) {
-                futures.add(executor.submit(() -> callApi(batch, model)));
+                futures.add(executor.submit(() -> callApi(batch, model, kbId)));
             }
 
             // 顺序回填（futures 与 missIdx 一一对应），保证 result 与输入顺序一致
@@ -148,7 +166,7 @@ public class EmbeddingService {
     }
 
     /** 调用百炼 Embedding API（一次批量请求），返回与输入顺序一致的向量数组 */
-    private float[][] callApi(List<String> batch, String model) {
+    private float[][] callApi(List<String> batch, String model, Long kbId) {
         long t0 = System.currentTimeMillis();
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
@@ -186,7 +204,11 @@ public class EmbeddingService {
                 }
                 vecs[i] = vec;
             }
+            int tokens = parseOrEstimateTokens(body, batch);
             ragMetrics.recordEmbedding(System.currentTimeMillis() - t0, true);
+            ragMetrics.recordEmbeddingTokens(tokens);
+            // RAG-053：embedding 用量按 KB 归因（kbId 为 null 时记为租户级）
+            usageStat.recordEmbedding(TenantContext.get(), kbId, maskKey(config.getEmbeddingApiKey()), tokens);
             return vecs;
         } catch (Exception e) {
             ragMetrics.recordEmbedding(System.currentTimeMillis() - t0, false);
@@ -233,6 +255,37 @@ public class EmbeddingService {
         } catch (Exception e) {
             return String.valueOf(s.hashCode());
         }
+    }
+
+    // ===== RAG-053：embedding 用量埋点辅助 =====
+
+    /** 密钥指纹：仅保留角色 + 末 4 位，不落明文 */
+    private static String maskKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "embed:none";
+        }
+        String tail = key.length() <= 4 ? key : key.substring(key.length() - 4);
+        return "embed:****" + tail;
+    }
+
+    /** 优先取 API 返回的 usage.total_tokens，否则按字符数 /4 估算 */
+    private static int parseOrEstimateTokens(Map<String, Object> body, List<String> batch) {
+        if (body != null && body.containsKey("usage")) {
+            Object u = body.get("usage");
+            if (u instanceof Map) {
+                Object t = ((Map<?, ?>) u).get("total_tokens");
+                if (t instanceof Number) {
+                    return ((Number) t).intValue();
+                }
+            }
+        }
+        int chars = 0;
+        for (String s : batch) {
+            if (s != null) {
+                chars += s.length();
+            }
+        }
+        return Math.max(1, chars / 4);
     }
 
     /** 优雅关闭并发线程池（RAG-052） */
