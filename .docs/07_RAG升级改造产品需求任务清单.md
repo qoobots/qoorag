@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026/053/054/055/056 已完成 ✅；EPIC-6 前沿 8 项设计态完成（见 .docs/08_EPIC6_frontier_design.md） | ✅ |
+| **M3 体验与成本** | RAG-022/025/026/053/054/055/056 已完成 ✅；EPIC-6 前沿 9 项设计态完成（见 .docs/08_EPIC6_frontier_design.md、.docs/09_milvus_vector_store.md） | ✅ |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），M3 体验与成本（RAG-022/025/026/053/054/055/056）全部完成 ✅，EPIC-6 前沿 8 项完成设计态（方案见 .docs/08_EPIC6_frontier_design.md）。** 下一步：EPIC-6 按优先级排期落地（P0 RAG-060 自适应检索 → P1 图谱/RAPTOR/listwise → P2 分解/MRL/反馈 → P3 ColPali），纳入专项。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），M3 体验与成本（RAG-022/025/026/053/054/055/056）全部完成 ✅，EPIC-6 前沿 9 项完成设计态（方案见 .docs/08_EPIC6_frontier_design.md、.docs/09_milvus_vector_store.md）。** 下一步：EPIC-6 按优先级排期落地（P0 RAG-060 自适应检索 → P1 图谱/RAPTOR/listwise → P2 分解/MRL/反馈/向量存储可插拔 → P3 ColPali），纳入专项。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -399,14 +399,15 @@ flowchart TB
 | **RAG-065** | **Listwise / Reranker 集成重排** | P2 | 8d | 以 LLM listwise 重排或 cross-encoder + LLM 集成提升 Precision | RAG-012 | ✅设计 |
 | **RAG-066** | **ColPali 视觉文档检索** | P2 | 13d | 页面图像多向量 MaxSim，跳过 OCR→版面→切块脆弱管线 | RAG-028 | ✅设计 |
 | **RAG-067** | **在线反馈学习闭环** | P2 | 8d | 点赞/点踩沉淀 badcase → 自动回灌评测集 → 驱动参数/Prompt 自优化 | RAG-007、RAG-000 | ✅设计 |
+| **RAG-068** | **向量存储可插拔 · Milvus 支持** | P2 | 13d | 抽出 VectorStore 抽象，保留 pgvector 实现，新增 Milvus 实现（collection / cosine / HNSW），按 `qoorag.vector.store` 切换；改造 RetrieveService / IngestService，迁移器仅对 pgvector 生效 | RAG-010、RAG-020 | ✅设计 |
 
-> **状态说明**：以上 8 项均已完成**设计态**（目标 / 业界方案 / 与现有架构接入点 / 取舍 / 验收计划 / 依赖与风险），统一见 [`.docs/08_EPIC6_frontier_design.md`](.docs/08_EPIC6_frontier_design.md)。落地需 Graph DB / VLM / OCR 等基建，建议按优先级 P0(RAG-060)→P1(RAG-061/062/065)→P2(RAG-063/064/067)→P3(RAG-066) 排期，而非一次性全做。
+> **状态说明**：以上 9 项均已完成**设计态**（目标 / 业界方案 / 与现有架构接入点 / 取舍 / 验收计划 / 依赖与风险），统一见 [`.docs/08_EPIC6_frontier_design.md`](.docs/08_EPIC6_frontier_design.md)（RAG-060~067）与 [`.docs/09_milvus_vector_store.md`](.docs/09_milvus_vector_store.md)（RAG-068）。落地需 Graph DB / VLM / OCR / Milvus 等基建，建议按优先级排期，而非一次性全做。
 
 ---
 
 ### EPIC-6　前沿能力探索（差异化）
 
-> 本块为上述 8 项的「验收标准细化版」，状态同第一块（设计态 ✅，方案见 [`.docs/08_EPIC6_frontier_design.md`](.docs/08_EPIC6_frontier_design.md)）。
+> 本块为上述 9 项的「验收标准细化版」，状态同第一块（设计态 ✅，方案见 [`.docs/08_EPIC6_frontier_design.md`](.docs/08_EPIC6_frontier_design.md) 与 [`.docs/09_milvus_vector_store.md`](.docs/09_milvus_vector_store.md)）。
 
 | 编号 | 需求/任务 | 优先级 | 工作量 | 验收标准 | 依赖 | 涉及代码 |
 |---|---|---|---|---|---|---|
@@ -416,8 +417,9 @@ flowchart TB
 | **RAG-063** | **Matryoshka 分层检索** | P2 | 8d | ① 用短维度粗排 + 长维度精排；② 存储与检索成本下降 ≥ 40% 且 Recall 损失 ≤ 1pp | RAG-100 | `EmbeddingService`、`vector_data` |
 | **RAG-064** | **RAPTOR 层次摘要索引** | P2 | 13d | ① 对文档聚类递归摘要建树；② 全局摘要类 query 效果对比输出结论 | RAG-021 | 新增摘要索引模块 |
 | **RAG-065** | **ColPali / Late Interaction 视觉文档检索** | P2 | 21d | ① 技术预研：页面图像 multi-vector + MaxSim 检索；② 输出可行性报告与 POC 效果对比 | RAG-027 | 新增多向量索引 |
+| **RAG-068** | **向量存储可插拔 · Milvus 支持** | P2 | 13d | ① 抽出 VectorStore 抽象（upsert/querySimilar/delete/ensureIndex）；② 保留 pgvector、新增 Milvus 实现（cosine/HNSW，partition=tenant/kb）；③ 按 `qoorag.vector.store` 切换；④ 提供 pgvector→Milvus 迁移工具，top-k 重合率 ≥ 95% | RAG-010、RAG-020 | 新增 `VectorStore` 抽象与 `MilvusVectorStore` |
 
-**EPIC-6 小计：P2 97d**
+**EPIC-6 小计：P2 110d**
 
 ---
 
@@ -432,10 +434,10 @@ flowchart TB
 | EPIC-3 摄入与知识表示 | 37d ✅ | 45d | 47d | **129d** |
 | EPIC-4 生成与上下文工程 | 13d ✅ | 45d | 21d | **79d** |
 | EPIC-5 工程化与成本 | 0d | 32d | 0d | **32d** |
-| EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
-| **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
+| EPIC-6 前沿探索 | 0d | 0d | 110d | **110d** |
+| **合计** | **101d（全部完成）** | **156d** | **207d** | **464d** |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），M3 体验与成本（RAG-022/025/026/053/054/055/056）全部完成 ✅，EPIC-6 前沿 8 项完成设计态（方案见 .docs/08_EPIC6_frontier_design.md）。** 下一步：EPIC-6 按优先级排期落地（P0 RAG-060 自适应检索 → P1 图谱/RAPTOR/listwise → P2 分解/MRL/反馈 → P3 ColPali），纳入专项。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），M3 体验与成本（RAG-022/025/026/053/054/055/056）全部完成 ✅，EPIC-6 前沿 9 项完成设计态（方案见 .docs/08_EPIC6_frontier_design.md、.docs/09_milvus_vector_store.md）。** 下一步：EPIC-6 按优先级排期落地（P0 RAG-060 自适应检索 → P1 图谱/RAPTOR/listwise → P2 分解/MRL/反馈/向量存储可插拔 → P3 ColPali），纳入专项。
 
 ---
 
