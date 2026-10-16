@@ -3,6 +3,11 @@ package com.qoobot.qoorag.service;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.xwpf.usermodel.*;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -10,16 +15,23 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
- * 文档解析服务：支持 TXT / MD（UTF-8 纯文本）和 PDF（PDFBox），统一返回纯文本
+ * 文档解析服务（RAG-025 扩充格式覆盖）。
+ * <p>
+ * 支持 TXT / MD / PDF / DOCX(.docx) / HTML(.html,.htm)。
+ * DOCX 与 HTML 统一转换为「带 Markdown 语义的纯文本」：
+ * 标题 → {@code #} 层级、表格 → Markdown 表格、列表/代码块保留原结构，
+ * 从而直接复用 {@code IngestService} 的 structure 策略（RAG-021）做结构感知切块与表格识别，
+ * 不必为每种格式单独写切块逻辑。
  */
 @Service
 public class DocumentParserService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentParserService.class);
 
-    /** 解析文件，返回纯文本内容 */
+    /** 解析文件，返回（可喂给结构切块器的）纯文本内容 */
     public String parse(MultipartFile file) throws IOException {
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null) {
@@ -31,8 +43,13 @@ public class DocumentParserService {
             return parseText(file);
         } else if (lowerName.endsWith(".pdf")) {
             return parsePdf(file);
+        } else if (lowerName.endsWith(".docx")) {
+            return parseDocx(file);
+        } else if (lowerName.endsWith(".html") || lowerName.endsWith(".htm")) {
+            return parseHtml(file);
         } else {
-            throw new IllegalArgumentException("不支持的文件格式: " + originalFilename + "（仅支持 .txt / .md / .pdf）");
+            throw new IllegalArgumentException(
+                    "不支持的文件格式: " + originalFilename + "（仅支持 .txt / .md / .pdf / .docx / .html / .htm）");
         }
     }
 
@@ -43,6 +60,170 @@ public class DocumentParserService {
         log.info("{} 解析完成：{}，{} 字符", ext, file.getOriginalFilename(), content.length());
         return content;
     }
+
+    // ===== DOCX（Apache POI） =====
+
+    private String parseDocx(MultipartFile file) throws IOException {
+        try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(file.getBytes()))) {
+            StringBuilder sb = new StringBuilder();
+            for (IBodyElement element : document.getBodyElements()) {
+                if (element instanceof XWPFParagraph paragraph) {
+                    String text = paragraph.getText();
+                    if (text == null || text.isBlank()) {
+                        continue;
+                    }
+                    Integer level = headingLevel(paragraph);
+                    if (level != null) {
+                        sb.append("#".repeat(level)).append(' ').append(text).append("\n\n");
+                    } else {
+                        sb.append(text).append("\n\n");
+                    }
+                } else if (element instanceof XWPFTable table) {
+                    sb.append(tableToMarkdown(table)).append("\n\n");
+                }
+            }
+            String out = sb.toString().trim();
+            log.info("DOCX 解析完成：{}，{} 字符", file.getOriginalFilename(), out.length());
+            return out;
+        }
+    }
+
+    /** 依据段落样式名识别标题层级（Heading1..Heading6 / 含 "heading" 字样） */
+    private static Integer headingLevel(XWPFParagraph paragraph) {
+        String style = paragraph.getStyle();
+        if (style == null) {
+            // 退而求其次：从 styleID 推断
+            style = paragraph.getStyleID();
+        }
+        if (style != null) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(?i)heading\\s*(\\d)|(\\d)").matcher(style);
+            if (m.find()) {
+                int lvl = m.group(1) != null ? Integer.parseInt(m.group(1))
+                        : Integer.parseInt(m.group(2));
+                if (lvl >= 1 && lvl <= 6) {
+                    return lvl;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String tableToMarkdown(XWPFTable table) {
+        List<XWPFTableRow> rows = table.getRows();
+        if (rows.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        List<String> header = cellTexts(rows.get(0));
+        int cols = Math.max(header.size(), 1);
+        sb.append("| ").append(String.join(" | ", header)).append(" |\n");
+        sb.append("| ").append("--- | ".repeat(cols)).append("\n");
+        for (int i = 1; i < rows.size(); i++) {
+            sb.append("| ").append(String.join(" | ", cellTexts(rows.get(i)))).append(" |\n");
+        }
+        return sb.toString().trim();
+    }
+
+    private static List<String> cellTexts(XWPFTableRow row) {
+        List<String> cells = new java.util.ArrayList<>();
+        for (XWPFTableCell cell : row.getTableCells()) {
+            cells.add(cell.getText().replace("\n", " ").trim());
+        }
+        return cells;
+    }
+
+    // ===== HTML（Jsoup） =====
+
+    private String parseHtml(MultipartFile file) throws IOException {
+        String html = new String(file.getBytes(), StandardCharsets.UTF_8);
+        Document doc = Jsoup.parse(html);
+        doc.select("script,style,noscript,template").remove();
+        StringBuilder sb = new StringBuilder();
+        Element body = doc.body();
+        if (body != null) {
+            for (Element child : body.children()) {
+                convertElement(child, sb, 0);
+            }
+        }
+        String out = sb.toString().trim();
+        log.info("HTML 解析完成：{}，{} 字符", file.getOriginalFilename(), out.length());
+        return out;
+    }
+
+    /** 将 HTML 块级元素递归转成 Markdown 语义文本（供 structure 切块器消费） */
+    private void convertElement(Element e, StringBuilder sb, int depth) {
+        String tag = e.tagName().toLowerCase();
+        switch (tag) {
+            case "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                int lvl = Integer.parseInt(tag.substring(1));
+                sb.append("#".repeat(lvl)).append(' ').append(e.text()).append("\n\n");
+            }
+            case "table" -> {
+                sb.append(htmlTableToMarkdown(e)).append("\n\n");
+            }
+            case "pre" -> {
+                sb.append("```\n").append(e.text()).append("\n```\n\n");
+            }
+            case "ul", "ol" -> {
+                for (Element li : e.select("li")) {
+                    sb.append("- ").append(li.text()).append("\n");
+                }
+                sb.append("\n");
+            }
+            case "blockquote" -> {
+                for (String line : e.text().split("\n")) {
+                    sb.append("> ").append(line).append("\n");
+                }
+                sb.append("\n");
+            }
+            case "p", "div", "section", "article", "header", "footer", "main", "aside", "br" -> {
+                String text = e.text();
+                if (text != null && !text.isBlank()) {
+                    sb.append(text).append("\n\n");
+                } else {
+                    for (Element c : e.children()) {
+                        convertElement(c, sb, depth + 1);
+                    }
+                }
+            }
+            default -> {
+                String text = e.ownText();
+                if (text != null && !text.isBlank()) {
+                    sb.append(text).append("\n\n");
+                }
+                for (Element c : e.children()) {
+                    convertElement(c, sb, depth + 1);
+                }
+            }
+        }
+    }
+
+    private static String htmlTableToMarkdown(Element table) {
+        Elements headerCols = table.select("tr").first() == null
+                ? new Elements() : table.select("tr").first().select("th,td");
+        int cols = Math.max(headerCols.size(), 1);
+        StringBuilder sb = new StringBuilder();
+        sb.append("| ");
+        for (Element c : headerCols) {
+            sb.append(c.text().replace("\n", " ")).append(" | ");
+        }
+        sb.append("\n| ").append("--- | ".repeat(cols)).append("\n");
+        for (Element tr : table.select("tr")) {
+            Elements cells = tr.select("th,td");
+            if (tr.select("th").isEmpty() == false && tr.equals(table.select("tr").first())) {
+                continue; // 表头已处理
+            }
+            sb.append("| ");
+            for (Element c : cells) {
+                sb.append(c.text().replace("\n", " ")).append(" | ");
+            }
+            sb.append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    // ===== PDF（PDFBox） =====
 
     private String parsePdf(MultipartFile file) throws IOException {
         // PDFBox 需要 File 或 InputStream，用临时文件避免内存问题

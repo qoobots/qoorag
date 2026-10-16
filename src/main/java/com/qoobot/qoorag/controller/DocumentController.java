@@ -87,7 +87,7 @@ public class DocumentController {
                 one.put("error", "文件名为空");
             } else if (!supported(filename)) {
                 one.put("status", "FAILED");
-                one.put("error", "不支持的格式，仅支持 .txt / .md / .pdf");
+                one.put("error", "不支持的格式，仅支持 .txt / .md / .pdf / .docx / .html / .htm");
             } else {
                 try {
                     log.info("收到文档上传：kbId={}, file={}, size={}", kbId, filename, file.getSize());
@@ -153,6 +153,7 @@ public class DocumentController {
 
     private static boolean supported(String filename) {
         String lower = filename.toLowerCase();
-        return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".pdf");
+        return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".pdf")
+                || lower.endsWith(".docx") || lower.endsWith(".html") || lower.endsWith(".htm");
     }
 }

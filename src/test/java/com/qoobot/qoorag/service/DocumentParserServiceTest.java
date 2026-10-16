@@ -1,63 +1,73 @@
 package com.qoobot.qoorag.service;
 
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFTable;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** DocumentParserService 单元测试：TXT / MD / PDF 解析与不支持格式异常 */
+/** RAG-025：DOCX / HTML 解析单元测试（纯逻辑，不依赖 Mockito，规避 JDK25 预存问题） */
 public class DocumentParserServiceTest {
 
-    private final DocumentParserService service = new DocumentParserService();
+    private final DocumentParserService parser = new DocumentParserService();
 
     @Test
-    void parse_txt_utf8() throws Exception {
-        MultipartFile file = new MockMultipartFile("file", "hello.txt", "text/plain",
-                "中文测试内容".getBytes(StandardCharsets.UTF_8));
-        String text = service.parse(file);
-        assertEquals("中文测试内容", text);
-    }
+    void parseDocx_convertsHeadingsAndTableToMarkdown() throws Exception {
+        try (XWPFDocument doc = new XWPFDocument()) {
+            XWPFParagraph h = doc.createParagraph();
+            h.setStyle("Heading1");
+            h.createRun().setText("产品概述");
 
-    @Test
-    void parse_md_utf8() throws Exception {
-        MultipartFile file = new MockMultipartFile("file", "readme.md", "text/markdown",
-                "# 标题\n\n这是 **Markdown** 正文内容。".getBytes(StandardCharsets.UTF_8));
-        String text = service.parse(file);
-        assertTrue(text.contains("标题"));
-        assertTrue(text.contains("Markdown"));
-    }
+            XWPFParagraph p = doc.createParagraph();
+            p.createRun().setText("量子科技专注于量子计算硬件。");
 
-    @Test
-    void parse_pdf_extracts_text() throws Exception {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try (PDDocument doc = new PDDocument()) {
-            PDPage page = new PDPage();
-            doc.addPage(page);
-            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
-                cs.beginText();
-                cs.setFont(PDType1Font.HELVETICA, 12);
-                cs.newLineAtOffset(50, 700);
-                cs.showText("Hello QooRAG PDF");
-                cs.endText();
-            }
-            doc.save(baos);
+            XWPFTable table = doc.createTable(2, 2);
+            table.getRow(0).getCell(0).setText("型号");
+            table.getRow(0).getCell(1).setText("算力");
+            table.getRow(1).getCell(0).setText("Q1");
+            table.getRow(1).getCell(1).setText("128Q");
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            doc.write(baos);
+            MultipartFile file = new MockMultipartFile("f.docx", "spec.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    baos.toByteArray());
+
+            String text = parser.parse(file);
+            assertTrue(text.contains("# 产品概述"), "应识别一级标题");
+            assertTrue(text.contains("量子科技专注于量子计算硬件"), "应保留正文");
+            assertTrue(text.contains("| 型号 | 算力 |"), "应转 Markdown 表头");
+            assertTrue(text.contains("| Q1 | 128Q |"), "应转 Markdown 表体");
         }
-        MultipartFile file = new MockMultipartFile("file", "doc.pdf", "application/pdf", baos.toByteArray());
-        String text = service.parse(file);
-        assertTrue(text.contains("Hello QooRAG PDF"));
     }
 
     @Test
-    void parse_unsupported_format_throws() {
-        MultipartFile file = new MockMultipartFile("file", "doc.doc", "application/octet-stream", "x".getBytes());
-        assertThrows(IllegalArgumentException.class, () -> service.parse(file));
+    void parseHtml_convertsHeadingsTableListToMarkdown() throws Exception {
+        String html = "<html><body>"
+                + "<h2>客户案例</h2>"
+                + "<p>某银行采用本平台构建合规知识库。</p>"
+                + "<ul><li>场景A</li><li>场景B</li></ul>"
+                + "<table><tr><th>指标</th><th>值</th></tr>"
+                + "<tr><td>召回率</td><td>95%</td></tr></table>"
+                + "</body></html>";
+        MultipartFile file = new MockMultipartFile("f.html", "case.html",
+                "text/html", html.getBytes("UTF-8"));
+
+        String text = parser.parse(file);
+        assertTrue(text.contains("## 客户案例"), "应识别二级标题");
+        assertTrue(text.contains("某银行采用本平台"), "应保留正文");
+        assertTrue(text.contains("- 场景A") && text.contains("- 场景B"), "应转无序列表");
+        assertTrue(text.contains("| 指标 | 值 |") && text.contains("| 召回率 | 95% |"), "应转 Markdown 表格");
+    }
+
+    @Test
+    void parse_rejectsUnsupportedFormat() {
+        MultipartFile file = new MockMultipartFile("f.xyz", "a.xyz", "text/plain", "x".getBytes());
+        assertThrows(IllegalArgumentException.class, () -> parser.parse(file));
     }
 }

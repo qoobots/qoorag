@@ -105,8 +105,8 @@ public class IngestService {
         doc.setSize(file.getSize());
         doc.setMimeType(file.getContentType());
         doc.setDocTitle(file.getOriginalFilename());
-        doc.setParser("pdfbox");
-        doc.setParserVersion("2.0.31");
+        doc.setParser(resolveParser(file.getOriginalFilename()));
+        doc.setParserVersion(resolveParserVersion(doc.getParser()));
         try {
             doc.setContentHash(sha256(file.getBytes()));
         } catch (IOException | NoSuchAlgorithmException e) {
@@ -243,6 +243,37 @@ public class IngestService {
     /** 分块草稿：内容 + 结构元数据 */
     private record ChunkDraft(String content, String headingPath, Integer charStart,
                               Integer charEnd, String chunkType) {}
+
+    /** 依据文件名推断解析器标识（用于 document.parser 字段，RAG-025） */
+    private static String resolveParser(String filename) {
+        if (filename == null) {
+            return "unknown";
+        }
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".txt") || lower.endsWith(".md")) {
+            return "text";
+        }
+        if (lower.endsWith(".pdf")) {
+            return "pdfbox";
+        }
+        if (lower.endsWith(".docx")) {
+            return "poi-xwpf";
+        }
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+            return "jsoup";
+        }
+        return "unknown";
+    }
+
+    private static String resolveParserVersion(String parser) {
+        return switch (parser) {
+            case "pdfbox" -> "2.0.31";
+            case "poi-xwpf" -> "5.2.5";
+            case "jsoup" -> "1.17.2";
+            case "text" -> "native";
+            default -> "";
+        };
+    }
 
     /** 分块入口：按策略分发 */
     List<String> splitText(String text) {
