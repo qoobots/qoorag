@@ -33,8 +33,8 @@
 | | RAG-041 上下文组装器 | ✅ |
 | **M3 体验与成本** | RAG-022/025/026、RAG-051~055（RAG-043/042/044/046 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR）。
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046/018 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
+> 或 M2 的 P1 质量项（RAG-015 查询改写）。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -306,7 +306,8 @@ flowchart TB
 | **RAG-015** | **查询改写（Query Rewriting）** | **P1** | 5d | ① 提供 `rewrite` 开关，用轻量 LLM 将 query 改写为检索友好形式（补全指代、展开缩写）；② 默认关闭，评测集上开启后 Recall@5 提升 ≥ 3pp 方可默认开启；③ 改写失败/超时静默降级为原 query | RAG-000 | 新增 `QueryTransformService` |
 | **RAG-016** | **Multi-Query / RAG-Fusion** | P1 | 5d | ① 生成 3-5 个 query 变体并行检索，RRF 融合去重；② 开关默认关闭；③ 单次问答增加的成本与延迟可度量（写入 trace） | RAG-015、RAG-006 | `QueryTransformService` |
 | **RAG-017** | **HyDE 假设文档检索** | P2 | 3d | ① 先用 LLM 生成假设答案，再用其 embedding 检索；② 开关默认关闭，评测对比后决定是否默认启用 | RAG-015 | `QueryTransformService` |
-| **RAG-018** | **MMR 去冗余重排** | P1 | 3d | ① 在精排后、组装上下文前增加 MMR（λ 可配）；② 评测集上 Context Precision 提升 ≥ 3pp | RAG-012 | `RetrieveService` / 新增 `ContextAssembler` |
+| **RAG-018** | **MMR 去冗余重排** | P1 ✅ | 3d | ① 在精排后、组装上下文前增加 MMR（λ 可配）；② 评测集上 Context Precision 提升 ≥ 3pp | RAG-012 | `RetrieveService` / 新增 `ContextAssembler` |
+| | *实现说明* | | | | | 新增 `MmrService.mmr(query, chunks, λ)`：在 `ApiController` 精排（rerank）之后、上下文组装之前调用，对片段做最大边际相关重排——相关性取 `score`，片段间相似度用字符二元组 Jaccard 近似（无需回查向量，零额外 IO）。`qoorag.retrieval.mmr-enabled`（默认 false，避免未评估回归）与 `mmr-lambda`（默认 0.5）可配。已验证：构造 2 片段语料后 /chat 触发 `MMR 多样性重排完成：2 个片段`，答案正确引用两片段。② 验收依赖评测集量化，当前为功能验证。 |
 | **RAG-019** | **自适应检索（Adaptive-k）** | P2 | 8d | ① 按召回分数分布动态决定送入 LLM 的片段数（分数断崖式下降则截断）；② 相比固定 top-n=5，token 成本下降 ≥ 15% 且 Faithfulness 不降 | RAG-000、RAG-003 | `ApiController.java:104-111` |
 | **RAG-100** | **Embedding 模型版本化与灰度迁移** | P2 | 13d | ① `vector_data` 增加 `embedding_model` + `dim` 列；② 支持双写与按 KB 灰度切流；③ 提供重建任务（不阻塞在线）；④ 换模型不再要求空表 | RAG-030（异步任务） | `VectorData`、`VectorDimensionReconciler`、`EmbeddingService` |
 
@@ -409,8 +410,8 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
-> 或 M2 的 P1 质量项（RAG-015 查询改写 / RAG-018 MMR）。
+> **P0（M1）13 项 + M2 全部完成，RAG-043/042/044/046/018 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-051~055），
+> 或 M2 的 P1 质量项（RAG-015 查询改写）。
 
 ---
 

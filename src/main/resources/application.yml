@@ -111,6 +111,8 @@ qoorag:
     diversity-max-per-doc: 2 # 多样性重排时单文档最多保留片段数
     rrf-k: 60                # RRF 融合平滑常数
     top-k: 20                # 生产检索/问答默认召回条数；cand=200+topK=20 下 Recall≈93%（见 eval_sweep3）
+    mmr-enabled: false       # RAG-018：MMR 多样性重排（精排后开启，默认关，避免未评估回归）
+    mmr-lambda: 0.5          # 相关性 vs 多样性 权衡：越大越偏相关，越小越偏多样
     lexical-pool: 200        # 词法路召回条数（RAG-011）；0 = 关闭词法检索
     lexical-min-score: 0.0   # 最低词法相关度（ts_rank_cd），0=不过滤
     # 上下文工程（RAG-041）：参考资料组装

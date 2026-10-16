@@ -11,6 +11,7 @@ import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
 import com.qoobot.qoorag.service.ChatHistoryService;
 import com.qoobot.qoorag.service.ChatService;
+import com.qoobot.qoorag.service.MmrService;
 import com.qoobot.qoorag.service.ContextAssembler;
 import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
@@ -46,6 +47,7 @@ public class ApiController {
     private final MetricsConfig.RagMetrics ragMetrics;
     private final AuditService auditService;
     private final ChatHistoryService historyService;
+    private final MmrService mmrService;
 
     /** RAG-043 流式问答专用线程池（守护线程，避免阻塞请求线程；CallerRuns 兜底防丢任务） */
     private final ExecutorService streamExecutor = new ThreadPoolExecutor(
@@ -72,7 +74,8 @@ public class ApiController {
                          ContextAssembler contextAssembler,
                          MetricsConfig.RagMetrics ragMetrics,
                          AuditService auditService,
-                         ChatHistoryService historyService) {
+                         ChatHistoryService historyService,
+                         MmrService mmrService) {
         this.qaTraceRepository = qaTraceRepository;
         this.retrieveService = retrieveService;
         this.chatService = chatService;
@@ -81,6 +84,7 @@ public class ApiController {
         this.ragMetrics = ragMetrics;
         this.auditService = auditService;
         this.historyService = historyService;
+        this.mmrService = mmrService;
     }
 
     /** 检索：查询向量化 → pgvector 余弦相似度 top-K 召回（受 kbId/tenantId 约束 + 权限校验） */
@@ -155,6 +159,7 @@ public class ApiController {
                         ? Math.max(topK, rerankService.getTopN() * 4) : topK;
                 List<RetrieveChunk> chunks = retrieveService.retrieve(reqEffectiveQuery, retrieveTopK, reqKbId, reqTenantId);
                 chunks = rerankService.rerank(reqEffectiveQuery, chunks);
+                chunks = mmrService.mmr(reqEffectiveQuery, chunks); // RAG-018：多样性重排（精排后、组装前）
                 ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
                 List<RetrieveChunk> usedChunks = assembled.used();
 
@@ -252,6 +257,7 @@ public class ApiController {
 
             // 1.5. 精排
             chunks = rerankService.rerank(effectiveQuery, chunks);
+            chunks = mmrService.mmr(effectiveQuery, chunks); // RAG-018：多样性重排（精排后、组装前）
 
             // 2. 上下文组装（RAG-041）
             ContextAssembler.AssembledContext assembled = contextAssembler.assemble(chunks);
