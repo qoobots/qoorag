@@ -6,6 +6,7 @@ import com.qoobot.qoorag.common.SessionInfo;
 import com.qoobot.qoorag.entity.IngestTask;
 import com.qoobot.qoorag.repository.DocumentRepository;
 import com.qoobot.qoorag.service.AuditService;
+import com.qoobot.qoorag.service.ChatCacheService;
 import com.qoobot.qoorag.service.IngestQueueService;
 import com.qoobot.qoorag.service.IngestService;
 import org.junit.jupiter.api.AfterEach;
@@ -34,8 +35,9 @@ public class DocumentControllerTest {
     IngestService ingestService = mock(IngestService.class);
     DocumentRepository documentRepository = mock(DocumentRepository.class);
     AuditService auditService = mock(AuditService.class);
+    ChatCacheService chatCacheService = mock(ChatCacheService.class);
     DocumentController controller = new DocumentController(
-            ingestQueueService, ingestService, documentRepository, auditService);
+            ingestQueueService, ingestService, documentRepository, auditService, chatCacheService);
     MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

@@ -2,6 +2,7 @@ package com.qoobot.qoorag.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.common.HttpRetryUtil;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -42,16 +43,19 @@ public class EmbeddingService {
     private final Duration cacheTtl;
     private final int concurrency;
     private final ExecutorService executor;
+    private final MetricsConfig.RagMetrics ragMetrics;
 
     public EmbeddingService(RestTemplate restTemplate,
                             BailianConfig config,
                             org.springframework.data.redis.core.StringRedisTemplate redis,
+                            MetricsConfig.RagMetrics ragMetrics,
                             @Value("${qoorag.embedding.cache-enabled:true}") boolean cacheEnabled,
                             @Value("${qoorag.embedding.cache-ttl-minutes:1440}") int cacheTtlMinutes,
                             @Value("${qoorag.embedding.concurrency:4}") int concurrency) {
         this.restTemplate = restTemplate;
         this.config = config;
         this.redis = redis;
+        this.ragMetrics = ragMetrics;
         this.cacheEnabled = cacheEnabled;
         this.cacheTtl = Duration.ofMinutes(cacheTtlMinutes);
         this.concurrency = Math.max(1, concurrency);
@@ -145,6 +149,7 @@ public class EmbeddingService {
 
     /** 调用百炼 Embedding API（一次批量请求），返回与输入顺序一致的向量数组 */
     private float[][] callApi(List<String> batch, String model) {
+        long t0 = System.currentTimeMillis();
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
         requestBody.put("input", batch);
@@ -181,8 +186,10 @@ public class EmbeddingService {
                 }
                 vecs[i] = vec;
             }
+            ragMetrics.recordEmbedding(System.currentTimeMillis() - t0, true);
             return vecs;
         } catch (Exception e) {
+            ragMetrics.recordEmbedding(System.currentTimeMillis() - t0, false);
             log.error("Embedding API 调用失败: {}", e.getMessage(), e);
             throw new RuntimeException("向量化失败: " + e.getMessage(), e);
         }

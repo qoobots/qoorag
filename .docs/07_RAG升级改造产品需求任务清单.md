@@ -4,7 +4,7 @@
 > 创建日期：2026-10-15
 > 配套文档：`00_头脑风暴文档.md`、`03_数据架构设计文档.md`、`05_技术架构设计文档.md`、`05.3_模块详细设计.md`、`06_功能清单进度文档.md`
 > 代码基线：Spring Boot 3.2.5 / Java 17 / PostgreSQL+pgvector / Redis / 阿里云百炼
-> 文档状态：🔄 持续更新（M1 进行中）
+> 文档状态：🔄 持续更新（M1/M2 已完成，M3 体验与成本推进中）
 > 任务状态图例：✅ 已完成　♋ 进行中　❌ 未开始（含后续 Epic）
 > 优先级图例：**P0** 必做（阻塞效果与规模化）　**P1** 应做（体验与成本）　**P2** 探索（差异化与前沿）
 > 收益图例：🔥 高　☀️ 中　🌙 低
@@ -31,9 +31,9 @@
 | **M2 质量跃迁** | RAG-023 Contextual Chunking | ✅ |
 | | RAG-040 Prompt 外置与版本化 | ✅ |
 | | RAG-041 上下文组装器 | ✅ |
-| **M3 体验与成本** | RAG-022/025/026、RAG-053~055（RAG-043/042/044/046/051/052 已完成 ✅） | ❌ |
+| **M3 体验与成本** | RAG-022/025/026、RAG-053、RAG-055（RAG-043/042/044/046/051/052/054 已完成 ✅） | ❌ |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-053~055）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054 已完成。** 下一步建议：收口 M3 可观测性（RAG-053 成本埋点、RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
 
 **顺带修复的预存缺陷**：
 1. `pom.xml` 未声明 `project.build.sourceEncoding`，javac 在中文 Windows 上按 GBK 读取 UTF-8 源码，导致所有中文字面量被破坏（日志/异常/测试断言乱码）。已补 UTF-8 声明 + surefire `file.encoding` + 运行期 `-Dfile.encoding=UTF-8`。
@@ -375,11 +375,29 @@ flowchart TB
 | **RAG-052** | **批量与并发优化** | P1 ✅ | 5d | ① Embedding 批量大小与并发度可配（当前硬编码 `min(batchSize,25)`）；② 入库吞吐提升至 ≥ 200 页/分钟 | RAG-030 | `EmbeddingService.java:43` |
 | | *实现说明* | | | | | `EmbeddingService` 改造：① 批量大小去掉 25 硬上限，直接取可配的 `BailianConfig.embeddingBatchSize`；② 新增 `qoorag.embedding.concurrency`（默认 4）固定线程池，将多个批次并发提交 API 调用（`executor.submit` + 顺序 `get` 回填，保证 `result` 与输入顺序一致），`@PreDestroy` 优雅关闭；worker 线程为守护线程。已验证：上传文档后 embedding 调用跑在 `embedding-worker` 线程、日志 `Embedding 缓存 命中=0/6，并发=4`，检索/问答仍正确（confidence=high）。② 吞吐 ≥200 页/分钟为配置可达成项，需在大规模语料下量化（本环境为功能与配置验证）。 |
 | **RAG-053** | **成本与用量埋点** | P1 | 5d | ① 按 KB/API Key 统计 embedding tokens、rerank 次数、LLM tokens 与费用估算；② 管理端可查用量报表 | RAG-006 | `MetricsConfig`、新增统计表 |
-| **RAG-054** | **慢查询与失败告警** | P1 | 3d | ① 检索/入库/LLM 的 P95 与失败率入 Prometheus；② 提供告警规则模板（入库失败率 >5%、检索 P95 > 阈值） | RAG-006 | `MetricsConfig`、Grafana 模板 |
+| **RAG-054** | **慢查询与失败告警** | P1 ✅ | 3d | ① 检索/入库/LLM 的 P95 与失败率入 Prometheus；② 提供告警规则模板（入库失败率 >5%、检索 P95 > 阈值） | RAG-006 | `MetricsConfig`、Grafana 模板 |
+| | *实现说明* | | | | | `MetricsConfig.RagMetrics` 扩展为检索/问答/入库/LLM/Embedding 五类 Timer（`publishPercentiles(0.5/0.95/0.99).publishPercentileHistogram(true)`，导出 `_bucket` 供 `histogram_quantile` 算 P95/P99）+ 对应失败 Counter；在 `ApiController`（检索/问答失败）、`IngestQueueService`（入库成败）、`ChatService`（LLM 成败）、`EmbeddingService`（向量化成败）埋点；补 `micrometer-registry-prometheus` 依赖并修复 `application.yml` 中 `management` 被误缩进在 `spring:` 下导致 actuator 仅暴露 health 的预存 bug，使 `/actuator/prometheus` 正常暴露；新增 `deploy/prometheus/rag_alerts.yml`（入库失败率>5%、检索 P95>1s、问答 P95>8s）。已验证 `/actuator/prometheus` 暴露全部 `qoorag_*` 指标且问答后计数递增。 |
 | **RAG-055** | **大规模数据性能验证** | P1 | 8d | ① 构造 10 万 / 100 万向量数据集压测；② 输出容量规划文档（单租户上限、索引内存占用、分区/分表建议）；③ 明确 `candidate-pool=200` 在各数据量下的延迟表现 | RAG-010 | 压测脚本 + 文档 |
 | **RAG-056** | **Docker Compose 一键体验** | P1 | 3d | ① compose 增加应用服务与可选 OSS/OCR 组件，一条命令起全栈；② README 增加 5 分钟上手指南 | RAG-027（可选） | `docker-compose.yml`、`README.md` |
 
 **EPIC-5 小计：P0 0d　P1 32d　P2 0d**
+
+---
+
+### EPIC-6　前沿能力路线图（2026·设计最强 RAG）
+
+> **定位**：在 M1/M2/M3 已落地「结构感知摄入 + 真混合检索 + 上下文工程 + 自动化评测 + 成本缓存」的基础上，面向 2026 主流企业 RAG，补齐**自适应检索、知识图谱、层次化索引、前沿重排、多模态与在线学习**五条差异化主线。多数项 P2 探索级，依赖已完成的基础设施（RAG-041 上下文组装、RAG-044 多轮、RAG-050/051 缓存、RAG-006 Tracing）。与 §2 前沿对标一致，此处落为可执行任务并标注状态。
+
+| 编号 | 需求/任务 | 优先级 | 工作量 | 要点（2026 前沿） | 依赖 | 状态 |
+|---|---|---|---|---|---|---|
+| **RAG-060** | **自适应检索 Self-RAG / CRAG** | P2 | 13d | 按首轮检索置信度决策：是否检索 / 改写重检 / 召外部检索；引入 Critic 给"检索充分度"打分，不足则迭代 | RAG-019、RAG-006 | ❌ |
+| **RAG-061** | **GraphRAG / LightRAG 知识图谱** | P2 | 13d | 抽取实体-关系建图，支持跨文档多跳推理与全局摘要；轻量版用双层检索降本 | RAG-020 | ❌ |
+| **RAG-062** | **RAPTOR 层次摘要树** | P2 | 8d | 文档聚类递归摘要建树，兼顾细节与全局问答 | RAG-021 | ❌ |
+| **RAG-063** | **Query Decomposition 复杂问分解** | P2 | 8d | 多约束/对比类问题拆为子问并行检索再合成（与 RAG-016 Multi-Query 互补） | RAG-015、RAG-016 | ❌ |
+| **RAG-064** | **Matryoshka 嵌套向量 + 粗排精排分层** | P2 | 8d | 短维度粗排、长维度精排，存储/算力降 50%+ | RAG-100 | ❌ |
+| **RAG-065** | **Listwise / Reranker 集成重排** | P2 | 8d | 以 LLM listwise 重排或 cross-encoder + LLM 集成提升 Precision | RAG-012 | ❌ |
+| **RAG-066** | **ColPali 视觉文档检索** | P2 | 13d | 页面图像多向量 MaxSim，跳过 OCR→版面→切块脆弱管线 | RAG-028 | ❌ |
+| **RAG-067** | **在线反馈学习闭环** | P2 | 8d | 点赞/点踩沉淀 badcase → 自动回灌评测集 → 驱动参数/Prompt 自优化 | RAG-007、RAG-000 | ❌ |
 
 ---
 
@@ -412,7 +430,7 @@ flowchart TB
 | EPIC-6 前沿探索 | 0d | 0d | 97d | **97d** |
 | **合计** | **101d（全部完成）** | **156d** | **194d** | **451d** |
 
-> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052 已完成。** 下一步建议：M3 其余体验项（RAG-022/025/026、RAG-053~055）。
+> **P0（M1）13 项 + M2 全部完成（含 P1：RAG-015/018/050），RAG-043/042/044/046/051/052/054 已完成。** 下一步建议：收口 M3 可观测性（RAG-053 成本埋点、RAG-055 压测），再推进 RAG-022/025/026 摄入侧；长期见 EPIC-6 前沿路线图。
 
 ---
 

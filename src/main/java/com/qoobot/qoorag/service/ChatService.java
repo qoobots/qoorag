@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qoobot.qoorag.common.BizException;
 import com.qoobot.qoorag.common.ErrorCode;
 import com.qoobot.qoorag.config.BailianConfig;
+import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.entity.PromptTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,15 +41,18 @@ public class ChatService {
     private final BailianConfig config;
     private final ContentSafetyService contentSafety;
     private final PromptTemplateService promptTemplateService;
+    private final MetricsConfig.RagMetrics ragMetrics;
 
     public ChatService(RestTemplate restTemplate,
                        BailianConfig config,
                        ContentSafetyService contentSafety,
-                       PromptTemplateService promptTemplateService) {
+                       PromptTemplateService promptTemplateService,
+                       MetricsConfig.RagMetrics ragMetrics) {
         this.restTemplate = restTemplate;
         this.config = config;
         this.contentSafety = contentSafety;
         this.promptTemplateService = promptTemplateService;
+        this.ragMetrics = ragMetrics;
     }
 
     /**
@@ -95,6 +99,7 @@ public class ChatService {
         String url = config.getChatBaseUrl() + "/chat/completions";
 
         // 3. 调用 LLM
+        long llmStart = System.currentTimeMillis();
         try {
             log.info("调用百炼 Chat API，model={}，prompt 来源={}（模板 id={} v={}），query='{}'",
                     config.getChatModel(), tpl.source(), tpl.templateId(), tpl.version(),
@@ -137,9 +142,11 @@ public class ChatService {
             result.put("promptSource", tpl.source());
             result.put("promptTemplateId", tpl.templateId());
             result.put("promptVersion", tpl.version());
+            ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, true);
             return result;
 
         } catch (Exception e) {
+            ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, false);
             log.error("Chat API 调用失败: {}", e.getMessage(), e);
             throw new RuntimeException("LLM 调用失败: " + e.getMessage(), e);
         }
@@ -206,6 +213,7 @@ public class ChatService {
         String model = config.getChatModel();
         int promptTokens = 0, completionTokens = 0, totalTokens = 0;
 
+        long llmStart = System.currentTimeMillis();
         try {
             HttpResponse<InputStream> response =
                     HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
@@ -263,13 +271,16 @@ public class ChatService {
                 }
             }
         } catch (IOException e) {
+            ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, false);
             throw new RuntimeException("读取流式响应失败: " + e.getMessage(), e);
         } catch (InterruptedException e) {
+            ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, false);
             Thread.currentThread().interrupt();
             throw new RuntimeException("流式响应被中断", e);
         }
 
         log.info("Chat 流式完成，model={} tokens(p={} c={} t={})", model, promptTokens, completionTokens, totalTokens);
+        ragMetrics.recordLlm(System.currentTimeMillis() - llmStart, true);
         return new StreamChatResult(model, promptTokens, completionTokens, totalTokens);
     }
 

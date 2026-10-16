@@ -1,6 +1,7 @@
 package com.qoobot.qoorag.service;
 
 import com.qoobot.qoorag.common.TenantContext;
+import com.qoobot.qoorag.config.MetricsConfig;
 import com.qoobot.qoorag.entity.Document;
 import com.qoobot.qoorag.entity.IngestTask;
 import com.qoobot.qoorag.repository.IngestTaskRepository;
@@ -57,6 +58,7 @@ public class IngestQueueService {
     private final IngestTaskRepository taskRepository;
     private final IngestService ingestService;
     private final AuditService auditService;
+    private final MetricsConfig.RagMetrics ragMetrics;
 
     /** 后台消费线程数 */
     @Value("${qoorag.ingest.workers:2}")
@@ -70,10 +72,12 @@ public class IngestQueueService {
 
     public IngestQueueService(IngestTaskRepository taskRepository,
                               IngestService ingestService,
-                              AuditService auditService) {
+                              AuditService auditService,
+                              MetricsConfig.RagMetrics ragMetrics) {
         this.taskRepository = taskRepository;
         this.ingestService = ingestService;
         this.auditService = auditService;
+        this.ragMetrics = ragMetrics;
         int n = Math.max(1, workers);
         this.executor = new java.util.concurrent.ThreadPoolExecutor(
                 n, n, 0L, TimeUnit.MILLISECONDS,
@@ -158,6 +162,7 @@ public class IngestQueueService {
         if (tenantId != null) {
             TenantContext.set(tenantId);
         }
+        long t0 = System.currentTimeMillis();
         try {
             task.setStatus(IngestTask.RUNNING);
             task.setStartedAt(LocalDateTime.now());
@@ -176,9 +181,11 @@ public class IngestQueueService {
             task.setUpdatedAt(LocalDateTime.now());
             task.setError(null);
             taskRepository.save(task);
+            ragMetrics.recordIngest(System.currentTimeMillis() - t0, true); // RAG-054：入库成功计时
             cleanup(filePath); // 成功后即删临时文件，避免堆积
             log.info("入库任务完成：taskId={} documentId={}", taskId, doc.getId());
         } catch (Exception e) {
+            ragMetrics.recordIngest(System.currentTimeMillis() - t0, false); // RAG-054：入库失败计时
             log.error("入库任务失败：taskId={}, error={}", taskId, e.getMessage(), e);
             task.setStatus(IngestTask.FAILED);
             task.setProgress(0);

@@ -1,0 +1,43 @@
+# RAG-054 告警规则模板（Prometheus）
+# 指标由 Micrometer 经 /actuator/prometheus 暴露（management.metrics.tags 可附加 env/instance）。
+# 计数器在 Prometheus 中带 _total 后缀；延迟使用百分位直方图（_bucket/_count/_sum），
+#   由 Timer.publishPercentileHistogram(true) 导出，告警用 histogram_quantile 聚合计算 P95。
+# 部署：prometheus 配置 rule_files 引用本文件，或用 `promtool check rules rag_alerts.yml` 校验。
+
+groups:
+  - name: qoorag_alerts
+    rules:
+      # ① 入库失败率 > 5%（按 5m 滚动窗口；失败/(成功+失败)）
+      - alert: IngestFailureRateHigh
+        expr: |
+          sum(rate(qoorag_ingest_failures_total[5m]))
+          / (sum(rate(qoorag_ingest_success_total[5m])) + sum(rate(qoorag_ingest_failures_total[5m])))
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RAG 入库失败率过高 ({{ $value | humanizePercentage }})"
+          description: "近 5 分钟入库失败率超过 5%，请检查 Embedding 服务可用性、网络或文档解析链路。"
+
+      # ② 检索 P95 > 1s（持续 10m）；基于百分位直方图 _bucket 用 histogram_quantile 聚合
+      - alert: RetrieveP95High
+        expr: |
+          histogram_quantile(0.95, sum(rate(qoorag_retrieve_latency_seconds_bucket[5m])) by (le)) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG 检索 P95 延迟过高 ({{ $value | humanizeDuration }})"
+          description: "近 10 分钟检索 P95 延迟超过 1s，请检查向量库、召回策略或缓存命中率（RAG-050/051）。"
+
+      # ③ 问答 P95 > 8s（补充，可选启用）
+      - alert: ChatP95High
+        expr: |
+          histogram_quantile(0.95, sum(rate(qoorag_chat_latency_seconds_bucket[5m])) by (le)) > 8.0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG 问答 P95 延迟过高 ({{ $value | humanizeDuration }})"
+          description: "近 10 分钟问答 P95 延迟超过 8s，请检查 LLM 配额/限流或上下文长度。"

@@ -29,17 +29,19 @@ spring:
   # 监控与健康检查（P2-11）
   jmx:
     enabled: false
-  management:
-    endpoints:
-      web:
-        exposure:
-          include: health,info,metrics,prometheus
-    endpoint:
-      health:
-        show-details: when-authorized
-    metrics:
-      tags:
-        application: qoorag
+
+# 监控/可观测性（RAG-054）：management 必须顶层，否则被解析为 spring.management.* 而不生效
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: qoorag
 
 qoorag:
   security:

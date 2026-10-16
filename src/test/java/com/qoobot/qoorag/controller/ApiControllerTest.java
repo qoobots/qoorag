@@ -8,8 +8,12 @@ import com.qoobot.qoorag.dto.RetrieveChunk;
 import com.qoobot.qoorag.entity.QaTrace;
 import com.qoobot.qoorag.repository.QaTraceRepository;
 import com.qoobot.qoorag.service.AuditService;
+import com.qoobot.qoorag.service.ChatCacheService;
+import com.qoobot.qoorag.service.ChatHistoryService;
 import com.qoobot.qoorag.service.ChatService;
 import com.qoobot.qoorag.service.ContextAssembler;
+import com.qoobot.qoorag.service.MmrService;
+import com.qoobot.qoorag.service.QueryTransformService;
 import com.qoobot.qoorag.service.RerankService;
 import com.qoobot.qoorag.service.RetrieveService;
 import org.junit.jupiter.api.AfterEach;
@@ -39,7 +43,11 @@ public class ApiControllerTest {
     QaTraceRepository qaTraceRepository = mock(QaTraceRepository.class);
     MetricsConfig.RagMetrics ragMetrics = mock(MetricsConfig.RagMetrics.class);
     AuditService auditService = mock(AuditService.class);
-    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, rerankService, contextAssembler, ragMetrics, auditService);
+    ChatHistoryService historyService = mock(ChatHistoryService.class);
+    MmrService mmrService = mock(MmrService.class);
+    QueryTransformService queryTransformService = mock(QueryTransformService.class);
+    ChatCacheService chatCacheService = mock(ChatCacheService.class);
+    ApiController controller = new ApiController(qaTraceRepository, retrieveService, chatService, rerankService, contextAssembler, ragMetrics, auditService, historyService, mmrService, queryTransformService, chatCacheService);
     MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

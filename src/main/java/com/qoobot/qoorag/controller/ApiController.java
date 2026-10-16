@@ -126,6 +126,7 @@ public class ApiController {
                     "chunks", chunks
             ));
         } catch (Exception e) {
+            ragMetrics.recordRetrieveFailure(); // RAG-054：检索失败计数
             log.error("检索失败: {}", e.getMessage(), e);
             return Result.fail(500, "检索失败: " + e.getMessage());
         }
@@ -285,6 +286,7 @@ public class ApiController {
                         reqTenantId, reqActor);
                 ragMetrics.recordChat(System.currentTimeMillis() - start);
             } catch (Exception e) {
+                ragMetrics.recordChatFailure(); // RAG-054：流式问答失败计数
                 log.error("流式问答失败: {}", e.getMessage(), e);
                 try {
                     emitter.send(SseEmitter.event().name("error").data(Map.of("error", e.getMessage())));
@@ -387,6 +389,7 @@ public class ApiController {
             }
             return Result.ok(chatResponse);
         } catch (Exception e) {
+            ragMetrics.recordChatFailure(); // RAG-054：问答失败计数
             log.error("问答失败: {}", e.getMessage(), e);
             return Result.fail(500, "问答失败: " + e.getMessage());
         }
