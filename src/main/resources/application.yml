@@ -186,4 +186,5 @@ qoorag:
     m: 16
     ef-construction: 256
     ef-search: 40
+    score-as-distance: false      # false=Milvus 2.3+（getScore 即余弦相似度）；true=旧版（返回距离 1-cosine）
     migrate-on-startup: false      # 启动期是否从 pgvector 迁移数据到 Milvus（需向量库内容已存在）

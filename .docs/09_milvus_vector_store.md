@@ -4,6 +4,8 @@
 > 状态：**设计态完成**；`VectorStore` 抽象骨架 + `PgVectorStore` + `MilvusVectorStore` 代码已实现并编译通过，运行时联调需独立部署 Milvus 服务。
 > **实现进度（第一步）**：`VectorStore` 抽象接口 + `PgVectorStore`（迁移原 `RetrieveService.queryVectorDb` 与 `IngestService` 向量写入）已实现；默认 `qoorag.vector.store=pgvector` 即走抽象层，业务代码已解耦。
 > **实现进度（第二步 · Milvus 后端）**：`MilvusVectorStore implements VectorStore`（milvus-sdk-java 2.4.4，v2 API）已实现并编译通过，按 `qoorag.vector.store=milvus` 启用；复用 Chunk/Document 仓储在召回后回填内容/元数据（等价 PgVectorStore 的 SQL JOIN）；附 `MilvusMigrationService`（pgvector→Milvus，受 `migrate-on-startup` 开关保护）。**待办**：连真实 Milvus 做召回一致性 / 延迟验收（设计第 7 节）。
+> **实现进度（第三步 · 集成测试与可测性）**：新增 `MilvusVectorStoreIntegrationTest`（Testcontainers 起 Milvus standalone，覆盖 upsert / querySimilar / deleteByChunkIds / deleteByDocument 全链路），默认跳过，仅当 `MILVUS_URI`（指向已运行的 Milvus）或 `-Drun.milvus.it=true`（需可用 Docker）时运行；并抽出 `loadChunks/loadDocuments` 可覆写钩子 + 包级测试构造器以脱离真实 JPA 仓储。纯逻辑单测 `MilvusVectorStoreTest`（filter 表达式 / float 转换）随行通过。
+> **score 口径**：Milvus 2.3+ 的 COSINE `getScore()` 直接返回余弦相似度（越大越相似），默认 `similarity = score`；旧版本可能返回距离（`1 - cosine`），由 `qoorag.milvus.score-as-distance` 切换。该映射与 pgvector `1 - (embedding <=> query)` 对齐（[0,1]、越大越相似）。**运行时联调（连真实 Milvus 确认 scores 口径与 top-k 一致性）受本环境 Docker Desktop 引擎管道限制未执行**，待具备 Milvus 环境时以集成测试打印的 scores 为准校验。
 
 ## 1. 背景与现状
 当前 Qoorag 的向量层**强耦合 PostgreSQL + pgvector**：

@@ -35,8 +35,11 @@ import java.util.stream.Collectors;
  * <p>经 {@code qoorag.vector.store=milvus} 启用；collection 字段：chunk_id(PK,Int64)、
  * embedding(FloatVector,dim)、kb_id/tenant_id/doc_id(Int64 标量，用于过滤)。
  * 检索召回 chunk_id + 距离后，复用 Chunk/Document 仓储回填内容等元数据（与 PgVectorStore 的 JOIN 等价）。</p>
- * <p><b>注意</b>：score 口径遵循设计文档——Milvus COSINE 返回距离为 {@code 1 - cosine}，
- * 故相似度取 {@code 1 - distance}；与 pgvector 的 {@code 1 - (embedding <=> query)} 一致。</p>
+ * <p><b>注意</b>：score 口径按 Milvus 版本有歧义。Milvus 2.3+ 的 COSINE 指标
+ * {@code getScore()} 直接返回余弦相似度（越大越相似），故默认 {@code similarity = score}；
+ * 旧版本可能返回距离（{@code 1 - cosine}），可设 {@code qoorag.milvus.score-as-distance=true}
+ * 切换为 {@code similarity = 1 - score}。该映射与 pgvector 的 {@code 1 - (embedding <=> query)}
+ * 语义对齐（均落在 [0,1]、越大越相似）。以集成测试打印的 scores 为准联调确认。</p>
  */
 @Service
 @ConditionalOnProperty(value = "qoorag.vector.store", havingValue = "milvus")
@@ -60,6 +63,8 @@ public class MilvusVectorStore implements VectorStore {
     private int efConstruction;
     @Value("${qoorag.milvus.ef-search:40}")
     private int efSearch;
+    @Value("${qoorag.milvus.score-as-distance:false}")
+    private boolean scoreAsDistance;
 
     public MilvusVectorStore(ChunkRepository chunkRepository,
                              DocumentRepository documentRepository,
@@ -75,6 +80,17 @@ public class MilvusVectorStore implements VectorStore {
             builder.token(token);
         }
         this.client = new MilvusClientV2(builder.build());
+    }
+
+    /** 测试用构造：显式指定集合名与维度等参数，避免依赖 Spring @Value 注入 */
+    MilvusVectorStore(ChunkRepository chunkRepository, DocumentRepository documentRepository,
+                      String uri, String token, String collection, int dim, int m, int efConstruction, int efSearch) {
+        this(chunkRepository, documentRepository, uri, token);
+        this.collection = collection;
+        this.dim = dim;
+        this.m = m;
+        this.efConstruction = efConstruction;
+        this.efSearch = efSearch;
     }
 
     @PostConstruct
@@ -106,8 +122,11 @@ public class MilvusVectorStore implements VectorStore {
                 continue;
             }
             long chunkId = ((Number) idObj).longValue();
-            // Milvus COSINE 返回距离（1 - cosine），相似度 = 1 - distance
-            double similarity = 1.0 - Optional.ofNullable(r.getScore()).map(Number::doubleValue).orElse(1.0);
+            // Milvus COSINE 现代版本（2.3+）getScore() 返回余弦相似度（越大越相似）；
+            // 旧版本返回距离（1 - cosine）。由 scoreAsDistance 控制，统一 clamp 到 [0,1]。
+            double raw = Optional.ofNullable(r.getScore()).map(Number::doubleValue).orElse(0.0);
+            double similarity = scoreAsDistance ? (1.0 - raw) : raw;
+            similarity = Math.max(0.0, Math.min(1.0, similarity));
             chunkIds.add(chunkId);
             similarityById.put(chunkId, similarity);
         }
@@ -116,12 +135,10 @@ public class MilvusVectorStore implements VectorStore {
         }
 
         // 2) 复用 DB 回填内容/元数据（与 PgVectorStore 的 SQL JOIN 等价）
-        Map<Long, Chunk> chunkMap = chunkRepository.findAllById(chunkIds).stream()
-                .collect(Collectors.toMap(Chunk::getId, c -> c, (a, b) -> a));
+        Map<Long, Chunk> chunkMap = loadChunks(chunkIds);
         Set<Long> docIds = chunkMap.values().stream()
                 .map(Chunk::getDocumentId).filter(Objects::nonNull).collect(Collectors.toSet());
-        Map<Long, Document> docMap = documentRepository.findAllById(docIds).stream()
-                .collect(Collectors.toMap(Document::getId, d -> d, (a, b) -> a));
+        Map<Long, Document> docMap = loadDocuments(docIds);
 
         List<RetrieveChunk> out = new ArrayList<>(chunkIds.size());
         for (Long chunkId : chunkIds) {
@@ -141,6 +158,21 @@ public class MilvusVectorStore implements VectorStore {
             out.add(rc);
         }
         return out;
+    }
+
+    /** 召回后按 id 批量回填 chunk（抽出为可覆写钩子，便于集成测试脱离真实 JPA 仓储） */
+    protected Map<Long, Chunk> loadChunks(Collection<Long> ids) {
+        return chunkRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Chunk::getId, c -> c, (a, b) -> a));
+    }
+
+    /** 召回后按 id 批量回填 document（抽出为可覆写钩子，便于集成测试脱离真实 JPA 仓储） */
+    protected Map<Long, Document> loadDocuments(Collection<Long> ids) {
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return documentRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Document::getId, d -> d, (a, b) -> a));
     }
 
     @Override
