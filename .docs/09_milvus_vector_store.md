@@ -1,8 +1,9 @@
 # RAG-068 向量存储可插拔 · Milvus 支持（设计态）
 
 > 关联任务清单：`.docs/07_RAG升级改造产品需求任务清单.md` → EPIC-6 → RAG-068。
-> 状态：**设计态完成**（目标 / 方案 / 取舍 / 验收 / 依赖）。完整实现需独立部署 Milvus 服务。
-> **实现进度（第一步）**：`VectorStore` 抽象接口 + `PgVectorStore`（迁移原 `RetrieveService.queryVectorDb` 与 `IngestService` 向量写入）已实现；默认 `qoorag.vector.store=pgvector` 即走抽象层，业务代码已解耦。`MilvusVectorStore` 待实现（需 Milvus 服务）。
+> 状态：**设计态完成**；`VectorStore` 抽象骨架 + `PgVectorStore` + `MilvusVectorStore` 代码已实现并编译通过，运行时联调需独立部署 Milvus 服务。
+> **实现进度（第一步）**：`VectorStore` 抽象接口 + `PgVectorStore`（迁移原 `RetrieveService.queryVectorDb` 与 `IngestService` 向量写入）已实现；默认 `qoorag.vector.store=pgvector` 即走抽象层，业务代码已解耦。
+> **实现进度（第二步 · Milvus 后端）**：`MilvusVectorStore implements VectorStore`（milvus-sdk-java 2.4.4，v2 API）已实现并编译通过，按 `qoorag.vector.store=milvus` 启用；复用 Chunk/Document 仓储在召回后回填内容/元数据（等价 PgVectorStore 的 SQL JOIN）；附 `MilvusMigrationService`（pgvector→Milvus，受 `migrate-on-startup` 开关保护）。**待办**：连真实 Milvus 做召回一致性 / 延迟验收（设计第 7 节）。
 
 ## 1. 背景与现状
 当前 Qoorag 的向量层**强耦合 PostgreSQL + pgvector**：

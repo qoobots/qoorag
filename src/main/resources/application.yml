@@ -168,8 +168,22 @@ qoorag:
     max-judge-calls: 50      # 单次评测最大 judge 调用条数（成本保护）
   # 向量库索引参数（RAG-010）：HNSW ANN 索引由启动期 PgvectorIndexMigrator 幂等创建
   vector:
-    store: pgvector            # 向量存储后端：pgvector（默认）| milvus（RAG-068，待实现）
+    store: pgvector            # 向量存储后端：pgvector（默认）| milvus（RAG-068 已实现 MilvusVectorStore，切换见下方 milvus 配置）
     hnsw:
       m: 16               # HNSW 每节点最大连接数（构建期参数，改后需 REINDEX）
       ef-construction: 128 # HNSW 构建期搜索宽度（构建期参数，改后需 REINDEX）
       ef-search: 40        # HNSW 查询期搜索宽度（运行时生效，调大提高召回/延迟；<=0 用 pgvector 默认值）
+
+  # RAG-068：Milvus 向量后端（仅当 qoorag.vector.store=milvus 时启用；需独立 Milvus 服务）
+  milvus:
+    enabled: ${MILVUS_ENABLED:false}
+    uri: ${MILVUS_URI:}            # 如 http://localhost:19530
+    token: ${MILVUS_TOKEN:}
+    collection: qoorag_vectors
+    dim: 1024                      # 须与 embedding 模型维度一致（当前 vector(1024)）
+    metric: COSINE
+    index-type: HNSW
+    m: 16
+    ef-construction: 256
+    ef-search: 40
+    migrate-on-startup: false      # 启动期是否从 pgvector 迁移数据到 Milvus（需向量库内容已存在）

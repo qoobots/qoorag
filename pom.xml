@@ -62,6 +62,12 @@
             <artifactId>pgvector</artifactId>
             <version>0.1.6</version>
         </dependency>
+        <!-- RAG-068：Milvus 向量存储后端（默认 pgvector；启用 milvus 时按需加载，SDK 内部 shade grpc，与 Boot 3.2 兼容） -->
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>2.4.4</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>

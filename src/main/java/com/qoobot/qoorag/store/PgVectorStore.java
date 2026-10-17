@@ -7,6 +7,7 @@ import com.qoobot.qoorag.repository.VectorDataRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,6 +27,7 @@ import java.util.stream.Collectors;
  * 逻辑由原 {@code RetrieveService.queryVectorDb} 与 IngestService 向量写入迁移而来，行为保持一致。
  */
 @Service
+@ConditionalOnProperty(value = "qoorag.vector.store", havingValue = "pgvector", matchIfMissing = true)
 public class PgVectorStore implements VectorStore {
 
     private static final Logger log = LoggerFactory.getLogger(PgVectorStore.class);
