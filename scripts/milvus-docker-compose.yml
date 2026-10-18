@@ -32,7 +32,10 @@ services:
       retries: 3
 
   minio:
-    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    # 原固定 RELEASE.2024-05-28T17-19-04Z，但本机镜像节点对该老 tag 持续繁忙/403 拉不动；
+    # 换用同线新版本（S3 兼容 API 不变，Milvus 2.6 无差异）。如需严格对齐旧版本，
+    # 改回后请先确认镜像可拉取。
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: qoorag-milvus-minio
     environment:
       MINIO_ACCESS_KEY: minioadmin
