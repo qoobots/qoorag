@@ -3,9 +3,10 @@ server:
 
 spring:
   datasource:
-    # DB_HOST / DB_PORT 可通过 .env 覆盖：本工程 docker-compose 默认把容器映射到宿主 5433，
-    # 以避免与机器上其他项目的 PostgreSQL（多为 5432）冲突。
-    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:5432}/qoorag
+    # DB_HOST / DB_PORT 可通过 .env 覆盖；默认指向本工程 docker-compose 的
+    # qoorag-postgres（宿主 5433），缺失 .env 时也不会误连机器上其它项目的
+    # PostgreSQL（多为 5432）。
+    url: jdbc:postgresql://${DB_HOST:127.0.0.1}:${DB_PORT:5433}/qoorag
     username: ${DB_USERNAME:qoorag}
     password: ${DB_PASSWORD:qoorag}
     driver-class-name: org.postgresql.Driver
@@ -20,8 +21,10 @@ spring:
             non_contextual_creation: true
   data:
     redis:
+      # 默认指向本工程 docker-compose 的 qoorag-redis（宿主 6380），
+      # 不借用机器上其它项目的 Redis（多为 6379）
       host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      port: ${REDIS_PORT:6380}
   servlet:
     multipart:
       max-file-size: 50MB
