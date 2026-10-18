@@ -17,6 +17,9 @@ target/
 *.tmp
 commit_msg.txt
 
+# Milvus 本地开发栈数据卷（scripts/milvus-docker-compose.yml 生成）
+scripts/qoorag-milvus-volumes/
+
 # 操作系统
 .DS_Store
 Thumbs.db
